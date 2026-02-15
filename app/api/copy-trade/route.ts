@@ -29,8 +29,8 @@ async function runCopyTradeHandler() {
       TARGET_ADDRESS,
       SIGNATURE_TYPE,
       {
-        minPercent: config.minPercent,
-        maxPercent: config.maxPercent,
+        copyPercent: config.copyPercent,
+        maxBetUsd: config.maxBetUsd,
         minBetUsd: config.minBetUsd,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }

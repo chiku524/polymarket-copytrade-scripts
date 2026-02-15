@@ -6,8 +6,8 @@ const PAGE_SIZE = 10;
 
 interface Config {
   enabled: boolean;
-  minPercent: number;
-  maxPercent: number;
+  copyPercent: number;
+  maxBetUsd: number;
   minBetUsd: number;
 }
 
@@ -186,7 +186,7 @@ export default function Home() {
     );
   }
 
-  const cfg = status?.config ?? { enabled: false, minPercent: 5, maxPercent: 10, minBetUsd: 1 };
+  const cfg = status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1 };
   const activity = status?.recentActivity ?? [];
 
   return (
@@ -202,7 +202,7 @@ export default function Home() {
 
         {/* Note: no need to keep UI open */}
         <p className="mb-4 text-xs text-zinc-500">
-          You don&apos;t need to keep this page open. When the toggle is on, a cron runs every minute on Vercel.
+          You don&apos;t need to keep this page open. When the toggle is on, set up a cron (e.g. cron-job.org) to GET your-app-url/api/copy-trade every minute with <code className="bg-zinc-800 px-1 rounded">Authorization: Bearer YOUR_CRON_SECRET</code>.
         </p>
 
         {/* Balance + Control bar */}
@@ -259,40 +259,42 @@ export default function Home() {
         {/* Settings */}
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Bet size</h2>
+          <p className="text-sm text-zinc-400 mb-4">
+            Copying at <strong>{cfg.copyPercent}%</strong> of gabagool22&apos;s bet, max <strong>${cfg.maxBetUsd}</strong> per trade
+          </p>
           <div className="flex flex-wrap gap-6">
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Min {cfg.minPercent}% · Max {cfg.maxPercent}%</p>
-              <div className="flex gap-2">
-                <input
-                  type="range"
-                  min={1}
-                  max={15}
-                  value={cfg.minPercent}
-                  onChange={(e) =>
-                    updateConfig({ minPercent: Math.min(parseInt(e.target.value, 10), cfg.maxPercent - 1) })
-                  }
-                  className="w-24 h-2 rounded-full bg-zinc-700 accent-emerald-500"
-                />
-                <input
-                  type="range"
-                  min={5}
-                  max={25}
-                  value={cfg.maxPercent}
-                  onChange={(e) =>
-                    updateConfig({ maxPercent: Math.max(parseInt(e.target.value, 10), cfg.minPercent + 1) })
-                  }
-                  className="w-24 h-2 rounded-full bg-zinc-700 accent-emerald-500"
-                />
-              </div>
+              <p className="text-xs text-zinc-500 mb-1">Copy %</p>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={cfg.copyPercent}
+                onChange={(e) => updateConfig({ copyPercent: Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 5)) })}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Max bet (USDC)</p>
+              <input
+                type="number"
+                min={0.5}
+                max={100}
+                step={0.5}
+                value={cfg.maxBetUsd}
+                onChange={(e) => updateConfig({ maxBetUsd: Math.max(0.5, parseFloat(e.target.value) || 3) })}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm"
+              />
             </div>
             <div>
               <p className="text-xs text-zinc-500 mb-1">Min bet (USDC)</p>
               <input
                 type="number"
                 min={0.1}
-                step={0.5}
+                step={0.1}
                 value={cfg.minBetUsd}
-                onChange={(e) => updateConfig({ minBetUsd: parseFloat(e.target.value) || 1 })}
+                onChange={(e) => updateConfig({ minBetUsd: Math.max(0.1, parseFloat(e.target.value) || 0.1) })}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm"
               />
             </div>

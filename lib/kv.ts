@@ -6,8 +6,11 @@ const ACTIVITY_KEY = "copy_trader_activity";
 
 export interface CopyTraderConfig {
   enabled: boolean;
-  minPercent: number;
-  maxPercent: number;
+  /** Copy at this % of target's bet (default 5) */
+  copyPercent: number;
+  /** Max USDC per bet (default 3) */
+  maxBetUsd: number;
+  /** Min bet to place - skip if below (default 0.10) */
   minBetUsd: number;
 }
 
@@ -30,14 +33,21 @@ export interface RecentActivity {
 
 const DEFAULT_CONFIG: CopyTraderConfig = {
   enabled: false,
-  minPercent: 5,
-  maxPercent: 10,
-  minBetUsd: 1,
+  copyPercent: 5,
+  maxBetUsd: 3,
+  minBetUsd: 0.1,
 };
 
 export async function getConfig(): Promise<CopyTraderConfig> {
-  const c = await kv.get<CopyTraderConfig>(CONFIG_KEY);
-  return c ? { ...DEFAULT_CONFIG, ...c } : { ...DEFAULT_CONFIG };
+  const c = await kv.get<Record<string, unknown>>(CONFIG_KEY);
+  if (!c) return { ...DEFAULT_CONFIG };
+  const migrated: CopyTraderConfig = {
+    enabled: Boolean(c.enabled ?? DEFAULT_CONFIG.enabled),
+    copyPercent: Number(c.copyPercent ?? c.minPercent ?? DEFAULT_CONFIG.copyPercent),
+    maxBetUsd: Number(c.maxBetUsd ?? c.minBetUsd ?? DEFAULT_CONFIG.maxBetUsd),
+    minBetUsd: Number(c.minBetUsd ?? DEFAULT_CONFIG.minBetUsd),
+  };
+  return migrated;
 }
 
 export async function setConfig(config: Partial<CopyTraderConfig>): Promise<CopyTraderConfig> {

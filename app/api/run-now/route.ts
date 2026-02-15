@@ -9,6 +9,14 @@ const SIGNATURE_TYPE = parseInt(process.env.SIGNATURE_TYPE ?? "1", 10);
 
 export const maxDuration = 60;
 
+/** GET returns instructions - use POST from the Run now button */
+export async function GET() {
+  return NextResponse.json(
+    { message: "Use POST to trigger copy trade (Run now button)" },
+    { status: 200 }
+  );
+}
+
 /**
  * Manual trigger - no auth required (same-origin only in production).
  * Use for "Run now" button in the UI.
@@ -30,8 +38,8 @@ export async function POST() {
       TARGET_ADDRESS,
       SIGNATURE_TYPE,
       {
-        minPercent: config.minPercent,
-        maxPercent: config.maxPercent,
+        copyPercent: config.copyPercent,
+        maxBetUsd: config.maxBetUsd,
         minBetUsd: config.minBetUsd,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }

@@ -33,6 +33,7 @@ export interface TradeActivity {
   side: string;
   price: number;
   size: number;
+  usdcSize?: number;
   title: string;
   outcome?: string;
 }
@@ -54,22 +55,22 @@ export async function getTargetActivity(
   return (Array.isArray(data) ? data : []).map((a) => ({
     ...a,
     price: parseFloat(String(a.price ?? 0)) || 0,
+    size: parseFloat(String(a.size ?? 0)) || 0,
+    usdcSize: a.usdcSize != null ? parseFloat(String(a.usdcSize)) : undefined,
     timestamp: Number(a.timestamp) || 0,
   }));
 }
 
-export function computeBetSize(
-  cashBalance: number,
-  price: number,
-  minPct: number,
-  maxPct: number,
-  minUsd: number
+/** Compute our bet: copyPercent of target's bet, capped at maxBetUsd, min minBetUsd */
+export function computeBetSizeFromTarget(
+  targetBetUsd: number,
+  copyPercent: number,
+  maxBetUsd: number,
+  minBetUsd: number
 ): number {
-  const minFraction = minPct / 100;
-  const maxFraction = maxPct / 100;
-  const pct = minFraction + price * (maxFraction - minFraction);
-  const amount = cashBalance * pct;
-  return amount >= minUsd ? Math.max(amount, minUsd) : 0;
+  const amount = (targetBetUsd * copyPercent) / 100;
+  const capped = Math.min(amount, maxBetUsd);
+  return capped >= minBetUsd ? capped : 0;
 }
 
 export interface CopiedTrade {
@@ -96,7 +97,7 @@ export async function runCopyTrade(
   myAddress: string,
   targetAddress: string,
   signatureType: number,
-  config: { minPercent: number; maxPercent: number; minBetUsd: number },
+  config: { copyPercent: number; maxBetUsd: number; minBetUsd: number },
   state: { lastTimestamp: number; copiedKeys: string[] }
 ): Promise<CopyTradeResult> {
   const result: CopyTradeResult = { copied: 0, failed: 0, copiedKeys: [], copiedTrades: [] };
@@ -144,11 +145,12 @@ export async function runCopyTrade(
     const key = `${txHash}|${asset}|${sideStr}`;
     if (copiedSet.has(key)) continue;
 
-    const betUsd = computeBetSize(
-      cashBalance,
-      price,
-      config.minPercent,
-      config.maxPercent,
+    // Target's bet in USD: use usdcSize if available, else size * price
+    const targetBetUsd = act.usdcSize ?? (act.size ?? 0) * price;
+    const betUsd = computeBetSizeFromTarget(
+      targetBetUsd,
+      config.copyPercent,
+      config.maxBetUsd,
       config.minBetUsd
     );
     if (betUsd < config.minBetUsd) continue;
@@ -185,14 +187,22 @@ export async function runCopyTrade(
         });
       } else {
         result.failed++;
-        const errMsg = resp?.errorMsg ?? "unknown";
-        result.error = result.error ? `${result.error}; ${errMsg}` : errMsg;
+        const errMsg =
+          resp?.errorMsg ??
+          (typeof resp?.error === "string" ? resp.error : null) ??
+          (resp?.error && typeof resp.error === "object" ? JSON.stringify(resp.error).slice(0, 100) : null) ??
+          resp?.message ??
+          (resp?.status ? `HTTP ${resp.status}` : null) ??
+          "Order rejected";
+        const next = result.error ? `${result.error}; ${errMsg}` : errMsg;
+        result.error = next.length > 500 ? `${next.slice(0, 497)}...` : next;
         console.error("Copy trade failed:", errMsg, act.title);
       }
     } catch (e) {
       result.failed++;
       const errStr = e instanceof Error ? e.message : String(e);
-      result.error = result.error ? `${result.error}; ${errStr}` : errStr;
+      const next = result.error ? `${result.error}; ${errStr}` : errStr;
+      result.error = next.length > 500 ? `${next.slice(0, 497)}...` : next;
       console.error("Copy trade error:", e);
     }
   }
