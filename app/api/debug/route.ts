@@ -9,11 +9,12 @@ const CRON_SECRET = process.env.CRON_SECRET;
 
 export async function GET() {
   try {
-    const [config, state, cashBalance, targetActivity] = await Promise.all([
+    const [config, state, cashBalance, targetActivity, geoblock] = await Promise.all([
       getConfig(),
       getState(),
       getCashBalance(MY_ADDRESS).catch(() => 0),
       getTargetActivity(TARGET_ADDRESS, 5).catch(() => []),
+      fetch("https://polymarket.com/api/geoblock").then((r) => r.json()).catch(() => ({ blocked: null, ip: null, country: null, region: null })),
     ]);
 
     const nowSec = Math.floor(Date.now() / 1000);
@@ -45,6 +46,13 @@ export async function GET() {
           : latestTs <= state.lastTimestamp
             ? `Latest trade (${latestTs}) is older than lastTimestamp (${state.lastTimestamp}) - already synced`
             : "Should copy on next run",
+      },
+      geoblock: {
+        blocked: geoblock.blocked,
+        country: geoblock.country,
+        region: geoblock.region,
+        ip: geoblock.ip,
+        note: geoblock.blocked ? `Server IP is in restricted region (${geoblock.country}). Use Railway EU West (Amsterdam) - ensure cron & app use Railway URL, not Vercel.` : null,
       },
     });
   } catch (e) {
