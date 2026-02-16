@@ -24,6 +24,10 @@ export interface CopyTraderState {
   lastRunAt?: number;
   lastCopiedAt?: number;
   lastError?: string;
+  /** Incremented each copy-trade run; claim runs when this reaches CLAIM_EVERY_N_RUNS */
+  runsSinceLastClaim?: number;
+  lastClaimAt?: number;
+  lastClaimResult?: { claimed: number; failed: number };
 }
 
 export interface RecentActivity {
@@ -74,6 +78,9 @@ export async function getState(): Promise<CopyTraderState> {
         lastRunAt: s.lastRunAt,
         lastCopiedAt: s.lastCopiedAt,
         lastError: s.lastError,
+        runsSinceLastClaim: s.runsSinceLastClaim ?? 0,
+        lastClaimAt: s.lastClaimAt,
+        lastClaimResult: s.lastClaimResult,
       }
     : { lastTimestamp: 0, copiedKeys: [] };
 }

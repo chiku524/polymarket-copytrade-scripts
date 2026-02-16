@@ -50,6 +50,9 @@ interface Status {
     lastRunAt?: number;
     lastCopiedAt?: number;
     lastError?: string;
+    runsSinceLastClaim?: number;
+    lastClaimAt?: number;
+    lastClaimResult?: { claimed: number; failed: number };
   };
   cashBalance: number;
   recentActivity: { title: string; outcome: string; side: string; amountUsd: number; price: number; timestamp: number }[];
@@ -83,6 +86,8 @@ export default function Home() {
   const [runResult, setRunResult] = useState<string | null>(null);
   const [cashingOut, setCashingOut] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  const [claimResult, setClaimResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [positionTab, setPositionTab] = useState<PositionTab>("active");
   const [activePage, setActivePage] = useState(0);
@@ -211,6 +216,32 @@ export default function Home() {
     }
   };
 
+  const claimNow = async () => {
+    setClaiming(true);
+    setClaimResult(null);
+    setError(null);
+    try {
+      const base = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetchWithTimeout(`${base}/api/claim-now`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Claim failed");
+      await fetchAll(true);
+      if (data.claimed > 0) {
+        setClaimResult(`Claimed ${data.claimed} position${data.claimed === 1 ? "" : "s"}`);
+      } else if (data.claimed === 0 && !data.error) {
+        setClaimResult("No redeemable positions to claim");
+      }
+      if (data.errors?.length) {
+        setClaimResult((prev) => (prev ? `${prev}. ${data.errors[0]}` : data.errors[0]));
+      }
+      setTimeout(() => setClaimResult(null), 5000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Claim failed");
+    } finally {
+      setClaiming(false);
+    }
+  };
+
   const cashout = async (pos: Position) => {
     setCashingOut(pos.asset);
     try {
@@ -302,7 +333,7 @@ export default function Home() {
 
         {/* Note: no need to keep UI open */}
         <p className="mb-4 text-xs text-zinc-500">
-          You don&apos;t need to keep this page open. When the toggle is on, set up a cron (e.g. cron-job.org) to GET your-app-url/api/copy-trade every minute with <code className="bg-zinc-800 px-1 rounded">Authorization: Bearer YOUR_CRON_SECRET</code>.
+          You don&apos;t need to keep this page open. When the toggle is on, set up a cron (e.g. cron-job.org) to GET your-app-url/api/copy-trade every minute with <code className="bg-zinc-800 px-1 rounded">Authorization: Bearer YOUR_CRON_SECRET</code>. Resolved winnings are claimed automatically every 10 copy-trade runs, or use Claim now.
         </p>
 
         {/* Balance + Control bar */}
@@ -333,13 +364,20 @@ export default function Home() {
               />
             </button>
             <div className="flex flex-col items-end gap-1">
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={runNow}
                   disabled={running}
                   className="px-4 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-sm font-medium disabled:opacity-50 transition-colors"
                 >
                   {running ? "Running…" : "Run now"}
+                </button>
+                <button
+                  onClick={claimNow}
+                  disabled={claiming}
+                  className="px-3 py-2 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-400 text-sm disabled:opacity-50 transition-colors"
+                >
+                  {claiming ? "Claiming…" : "Claim now"}
                 </button>
                 <button
                   onClick={resetSync}
@@ -349,8 +387,8 @@ export default function Home() {
                   {resetting ? "Resetting…" : "Reset sync"}
                 </button>
               </div>
-              {runResult && (
-                <span className="text-xs text-emerald-400/90">{runResult}</span>
+              {(runResult || claimResult) && (
+                <span className="text-xs text-emerald-400/90">{runResult || claimResult}</span>
               )}
             </div>
           </div>
@@ -642,6 +680,14 @@ export default function Home() {
         <footer className="mt-8 pt-6 border-t border-zinc-800/60 text-xs text-zinc-500">
           Last run: {status?.state.lastRunAt ? new Date(status.state.lastRunAt).toLocaleString() : "—"} ·{" "}
           Last copied: {status?.state.lastCopiedAt ? new Date(status.state.lastCopiedAt).toLocaleString() : "—"}
+          {" · "}
+          Last claim: {status?.state.lastClaimAt ? new Date(status.state.lastClaimAt).toLocaleString() : "—"}
+          {status?.state.lastClaimResult && (
+            <span> ({status.state.lastClaimResult.claimed} claimed)</span>
+          )}
+          {status?.state.runsSinceLastClaim != null && (
+            <span className="block mt-0.5 text-zinc-600">Claim runs every 10 copy-trade runs ({status.state.runsSinceLastClaim}/10)</span>
+          )}
           {status?.state.lastError && (
             <span className="block mt-1 text-red-400">{status.state.lastError}</span>
           )}

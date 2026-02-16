@@ -21,7 +21,14 @@ A Next.js app provides a control UI to toggle copy trading, adjust percentage ra
    - `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
    - `CRON_SECRET` – Any random string (e.g. `openssl rand -hex 32`) to secure the cron job
 
-4. ** Cron** runs every minute when enabled. Enable copy trading in the UI to start.
+4. **Cron** runs every minute when enabled. Enable copy trading in the UI to start.
+
+5. **Claiming winnings** – Resolved positions must be “claimed” to move winnings to your cash balance. The app:
+   - Runs **claim automatically every 10 copy-trade runs** (configurable via `CLAIM_EVERY_N_RUNS`).
+   - Or use the **Claim now** button in the UI (or `POST /api/claim-now`).
+   - For **Polymarket proxy wallets** (default), set Builder API keys so the relayer can execute the claim from your proxy:
+     - `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE` (or `BUILDER_API_KEY`, `BUILDER_SECRET`, `BUILDER_PASSPHRASE`).
+   - Optional: `POLYGON_RPC_URL` (default: public Polygon RPC), `CLAIM_EVERY_N_RUNS` (default: 10).
 
 ### Local dev
 

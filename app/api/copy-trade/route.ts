@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConfig, getState, setState, appendActivity } from "@/lib/kv";
 import { runCopyTrade } from "@/lib/copy-trade";
+import { claimWinnings } from "@/lib/claim";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
 const TARGET_ADDRESS = process.env.TARGET_ADDRESS ?? "0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d";
 const SIGNATURE_TYPE = parseInt(process.env.SIGNATURE_TYPE ?? "1", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
+const CLAIM_EVERY_N_RUNS = Math.max(1, parseInt(process.env.CLAIM_EVERY_N_RUNS ?? "10", 10));
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 async function runCopyTradeHandler() {
 
@@ -38,13 +40,32 @@ async function runCopyTradeHandler() {
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );
 
-    await setState({
+    const runsSinceLastClaim = (state.runsSinceLastClaim ?? 0) + 1;
+    const shouldClaim = runsSinceLastClaim >= CLAIM_EVERY_N_RUNS;
+
+    const stateUpdate: Parameters<typeof setState>[0] = {
       lastTimestamp: result.lastTimestamp ?? state.lastTimestamp,
       copiedKeys: result.copiedKeys.length > 0 ? result.copiedKeys : state.copiedKeys,
       lastRunAt: Date.now(),
       lastCopiedAt: result.copied > 0 ? Date.now() : state.lastCopiedAt,
       lastError: result.error,
-    });
+      runsSinceLastClaim: shouldClaim ? 0 : runsSinceLastClaim,
+    };
+
+    let claimResult: { claimed: number; failed: number } | undefined;
+    if (shouldClaim) {
+      try {
+        const res = await claimWinnings(PRIVATE_KEY, MY_ADDRESS);
+        stateUpdate.lastClaimAt = Date.now();
+        stateUpdate.lastClaimResult = { claimed: res.claimed, failed: res.failed };
+        claimResult = stateUpdate.lastClaimResult;
+      } catch (claimErr) {
+        console.error("Claim after run failed:", claimErr);
+        stateUpdate.runsSinceLastClaim = 0;
+      }
+    }
+
+    await setState(stateUpdate);
     if (result.copiedTrades?.length) {
       await appendActivity(result.copiedTrades);
     }
@@ -54,6 +75,7 @@ async function runCopyTradeHandler() {
       copied: result.copied,
       failed: result.failed,
       error: result.error,
+      claimed: claimResult?.claimed,
     });
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
