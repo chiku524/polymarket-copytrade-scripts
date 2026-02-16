@@ -20,9 +20,10 @@ export async function PATCH(request: Request) {
     const config = await setConfig(body);
     return NextResponse.json(config);
   } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to save config";
     console.error("Config PATCH error:", e);
     return NextResponse.json(
-      { error: "Failed to save config" },
+      { error: msg },
       { status: 500 }
     );
   }

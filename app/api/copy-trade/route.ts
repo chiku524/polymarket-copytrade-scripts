@@ -32,6 +32,7 @@ async function runCopyTradeHandler() {
         copyPercent: config.copyPercent,
         maxBetUsd: config.maxBetUsd,
         minBetUsd: config.minBetUsd,
+        stopLossBalance: config.stopLossBalance ?? 0,
       },
       { lastTimestamp: state.lastTimestamp, copiedKeys: state.copiedKeys }
     );

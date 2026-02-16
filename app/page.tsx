@@ -1,14 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 
 const PAGE_SIZE = 10;
+const FETCH_INTERVAL_MS = 15000;
+const CONFIG_COOLDOWN_MS = 20000;
+
+function useDebouncedCallback<A extends unknown[]>(
+  fn: (...args: A) => void,
+  delay: number
+): (...args: A) => void {
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
+  return useCallback(
+    (...args: A) => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => fnRef.current(...args), delay);
+    },
+    [delay]
+  );
+}
 
 interface Config {
   enabled: boolean;
   copyPercent: number;
   maxBetUsd: number;
   minBetUsd: number;
+  stopLossBalance: number;
 }
 
 interface Status {
@@ -55,8 +74,9 @@ export default function Home() {
   const [positionTab, setPositionTab] = useState<PositionTab>("active");
   const [activePage, setActivePage] = useState(0);
   const [resolvedPage, setResolvedPage] = useState(0);
+  const configUpdatedAtRef = useRef<number>(0);
 
-  const fetchAll = async () => {
+  const fetchAll = useCallback(async (forceConfig = false) => {
     try {
       const [statusRes, positionsRes] = await Promise.all([
         fetch("/api/status"),
@@ -66,7 +86,17 @@ export default function Home() {
       if (!positionsRes.ok) throw new Error("Failed to load positions");
       const statusData = await statusRes.json();
       const positionsData = await positionsRes.json();
-      setStatus(statusData);
+      setStatus((prev) => {
+        if (!prev) return statusData;
+        const inCooldown = Date.now() - configUpdatedAtRef.current < CONFIG_COOLDOWN_MS;
+        if (inCooldown && !forceConfig) {
+          return {
+            ...statusData,
+            config: prev.config,
+          };
+        }
+        return statusData;
+      });
       setActivePositions(positionsData.active ?? []);
       setResolvedPositions(positionsData.resolved ?? []);
       setError(null);
@@ -75,32 +105,40 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchAll();
-    const id = setInterval(fetchAll, 10000);
-    return () => clearInterval(id);
   }, []);
 
-  const updateConfig = async (updates: Partial<Config>) => {
+  useEffect(() => {
+    fetchAll(true);
+    const id = setInterval(() => fetchAll(false), FETCH_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [fetchAll]);
+
+  const updateConfig = useCallback(async (updates: Partial<Config>, optimistic?: boolean) => {
     if (!status) return;
+    if (optimistic && "enabled" in updates) {
+      setStatus((s) => (s ? { ...s, config: { ...s.config, ...updates } } : null));
+    }
     setSaving(true);
+    setError(null);
     try {
       const res = await fetch("/api/config", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });
-      if (!res.ok) throw new Error("Failed to save");
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+      configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: data } : null));
     } catch (e) {
+      if (optimistic && "enabled" in updates) {
+        setStatus((s) => (s ? { ...s, config: { ...s.config, enabled: !updates.enabled } } : null));
+      }
       setError(e instanceof Error ? e.message : "Failed to save");
     } finally {
       setSaving(false);
     }
-  };
+  }, [status]);
 
   const runNow = async () => {
     setRunning(true);
@@ -110,9 +148,11 @@ export default function Home() {
       const res = await fetch("/api/run-now", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
-      await fetchAll();
+      await fetchAll(true);
       if (data.skipped) {
         setRunResult("Skipped (copy trading is disabled)");
+      } else if (data.error && (data.error.startsWith("Stop-loss") || data.error.startsWith("Low balance"))) {
+        setRunResult(data.error);
       } else if (data.copied > 0) {
         setRunResult(`Copied ${data.copied} trade${data.copied === 1 ? "" : "s"}`);
       } else {
@@ -133,7 +173,7 @@ export default function Home() {
       const res = await fetch("/api/reset-sync", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Reset failed");
-      await fetchAll();
+      await fetchAll(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Reset failed");
     } finally {
@@ -155,7 +195,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Cashout failed");
-      await fetchAll();
+      await fetchAll(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cashout failed");
     } finally {
@@ -163,7 +203,23 @@ export default function Home() {
     }
   };
 
-  const toggleEnabled = () => updateConfig({ enabled: !status?.config.enabled });
+  const toggleEnabled = () => updateConfig({ enabled: !status?.config.enabled }, true);
+
+  const debouncedUpdateConfig = useDebouncedCallback(
+    (updates: Partial<Config>) => updateConfig(updates, false),
+    600
+  );
+
+  const handleNumericConfigChange = useCallback(
+    (field: keyof Config, value: number, min: number, max: number) => {
+      const clamped = Math.max(min, Math.min(max, value));
+      setStatus((s) =>
+        s ? { ...s, config: { ...s.config, [field]: clamped } } : null
+      );
+      debouncedUpdateConfig({ [field]: clamped });
+    },
+    [debouncedUpdateConfig]
+  );
 
   if (loading) {
     return (
@@ -178,7 +234,7 @@ export default function Home() {
       <main className="min-h-screen flex items-center justify-center p-6 bg-zinc-950">
         <div className="text-center">
           <p className="text-red-400 mb-4">{error}</p>
-          <button onClick={fetchAll} className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">
+          <button onClick={() => fetchAll(true)} className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">
             Retry
           </button>
         </div>
@@ -186,7 +242,7 @@ export default function Home() {
     );
   }
 
-  const cfg = status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1 };
+  const cfg = status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1, stopLossBalance: 0 };
   const activity = status?.recentActivity ?? [];
 
   return (
@@ -271,8 +327,16 @@ export default function Home() {
                 max={100}
                 step={1}
                 value={cfg.copyPercent}
-                onChange={(e) => updateConfig({ copyPercent: Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 5)) })}
-                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "copyPercent",
+                    parseInt(e.target.value, 10) || 5,
+                    1,
+                    100
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
             </div>
             <div>
@@ -283,8 +347,16 @@ export default function Home() {
                 max={100}
                 step={0.5}
                 value={cfg.maxBetUsd}
-                onChange={(e) => updateConfig({ maxBetUsd: Math.max(0.5, parseFloat(e.target.value) || 3) })}
-                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "maxBetUsd",
+                    parseFloat(e.target.value) || 3,
+                    0.5,
+                    100
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
             </div>
             <div>
@@ -294,9 +366,38 @@ export default function Home() {
                 min={0.1}
                 step={0.1}
                 value={cfg.minBetUsd}
-                onChange={(e) => updateConfig({ minBetUsd: Math.max(0.1, parseFloat(e.target.value) || 0.1) })}
-                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "minBetUsd",
+                    parseFloat(e.target.value) || 0.1,
+                    0.1,
+                    100
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Stop-loss (USDC)</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.stopLossBalance || ""}
+                placeholder="0 = disabled"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "stopLossBalance",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    10000
+                  )
+                }
+                disabled={saving}
+                className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Stops copying when balance falls below this (0 = off)</p>
             </div>
           </div>
         </section>

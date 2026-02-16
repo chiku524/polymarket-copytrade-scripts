@@ -97,7 +97,7 @@ export async function runCopyTrade(
   myAddress: string,
   targetAddress: string,
   signatureType: number,
-  config: { copyPercent: number; maxBetUsd: number; minBetUsd: number },
+  config: { copyPercent: number; maxBetUsd: number; minBetUsd: number; stopLossBalance: number },
   state: { lastTimestamp: number; copiedKeys: string[] }
 ): Promise<CopyTradeResult> {
   const result: CopyTradeResult = { copied: 0, failed: 0, copiedKeys: [], copiedTrades: [] };
@@ -117,6 +117,10 @@ export async function runCopyTrade(
   const cashBalance = await getCashBalance(myAddress);
   if (cashBalance < 1) {
     result.error = "Low balance";
+    return result;
+  }
+  if (config.stopLossBalance > 0 && cashBalance < config.stopLossBalance) {
+    result.error = `Stop-loss: balance $${cashBalance.toFixed(2)} below threshold $${config.stopLossBalance}`;
     return result;
   }
 

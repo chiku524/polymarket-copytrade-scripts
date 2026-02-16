@@ -12,6 +12,8 @@ export interface CopyTraderConfig {
   maxBetUsd: number;
   /** Min bet to place - skip if below (default 0.10) */
   minBetUsd: number;
+  /** Stop copying when cash balance falls below this (0 = disabled) */
+  stopLossBalance: number;
 }
 
 export interface CopyTraderState {
@@ -36,6 +38,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   copyPercent: 5,
   maxBetUsd: 3,
   minBetUsd: 0.1,
+  stopLossBalance: 0,
 };
 
 export async function getConfig(): Promise<CopyTraderConfig> {
@@ -46,6 +49,7 @@ export async function getConfig(): Promise<CopyTraderConfig> {
     copyPercent: Number(c.copyPercent ?? c.minPercent ?? DEFAULT_CONFIG.copyPercent),
     maxBetUsd: Number(c.maxBetUsd ?? c.minBetUsd ?? DEFAULT_CONFIG.maxBetUsd),
     minBetUsd: Number(c.minBetUsd ?? DEFAULT_CONFIG.minBetUsd),
+    stopLossBalance: Number(c.stopLossBalance ?? DEFAULT_CONFIG.stopLossBalance),
   };
   return migrated;
 }
