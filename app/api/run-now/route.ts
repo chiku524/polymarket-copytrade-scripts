@@ -68,6 +68,18 @@ export async function POST() {
       lastRunAt: Date.now(),
       lastCopiedAt: result.copied > 0 ? Date.now() : state.lastCopiedAt,
       lastError: result.error,
+      lastStrategyDiagnostics: {
+        mode: result.mode,
+        evaluatedSignals: result.evaluatedSignals,
+        eligibleSignals: result.eligibleSignals,
+        rejectedReasons: result.rejectedReasons,
+        copied: result.copied,
+        paper: result.paper,
+        failed: result.failed,
+        budgetCapUsd: result.budgetCapUsd,
+        budgetUsedUsd: result.budgetUsedUsd,
+        timestamp: Date.now(),
+      },
     });
     if (result.copiedTrades?.length) {
       await appendActivity(result.copiedTrades);
@@ -93,6 +105,7 @@ export async function POST() {
       failed: result.failed,
       evaluatedSignals: result.evaluatedSignals,
       eligibleSignals: result.eligibleSignals,
+      rejectedReasons: result.rejectedReasons,
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
       error: result.error,

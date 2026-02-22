@@ -42,10 +42,24 @@ export interface CopyTraderState {
   lastRunAt?: number;
   lastCopiedAt?: number;
   lastError?: string;
+  lastStrategyDiagnostics?: StrategyDiagnostics;
   /** Incremented each copy-trade run; claim runs when this reaches CLAIM_EVERY_N_RUNS */
   runsSinceLastClaim?: number;
   lastClaimAt?: number;
   lastClaimResult?: { claimed: number; failed: number };
+}
+
+export interface StrategyDiagnostics {
+  mode: TradingMode;
+  evaluatedSignals: number;
+  eligibleSignals: number;
+  rejectedReasons: Record<string, number>;
+  copied: number;
+  paper: number;
+  failed: number;
+  budgetCapUsd: number;
+  budgetUsedUsd: number;
+  timestamp: number;
 }
 
 export interface RecentActivity {
@@ -217,6 +231,7 @@ export async function getState(): Promise<CopyTraderState> {
         lastRunAt: s.lastRunAt,
         lastCopiedAt: s.lastCopiedAt,
         lastError: s.lastError,
+        lastStrategyDiagnostics: s.lastStrategyDiagnostics,
         runsSinceLastClaim: s.runsSinceLastClaim ?? 0,
         lastClaimAt: s.lastClaimAt,
         lastClaimResult: s.lastClaimResult,
@@ -231,7 +246,7 @@ export async function setState(state: Partial<CopyTraderState>): Promise<void> {
 }
 
 export async function resetSyncState(): Promise<void> {
-  await kv.set(STATE_KEY, { lastTimestamp: 0, copiedKeys: [] });
+  await kv.set(STATE_KEY, { lastTimestamp: 0, copiedKeys: [], lastStrategyDiagnostics: undefined });
 }
 
 export async function getRecentActivity(): Promise<RecentActivity[]> {

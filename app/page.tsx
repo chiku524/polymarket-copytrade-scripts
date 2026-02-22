@@ -56,6 +56,18 @@ interface Status {
     lastRunAt?: number;
     lastCopiedAt?: number;
     lastError?: string;
+    lastStrategyDiagnostics?: {
+      mode: "off" | "paper" | "live";
+      evaluatedSignals: number;
+      eligibleSignals: number;
+      rejectedReasons: Record<string, number>;
+      copied: number;
+      paper: number;
+      failed: number;
+      budgetCapUsd: number;
+      budgetUsedUsd: number;
+      timestamp: number;
+    };
     runsSinceLastClaim?: number;
     lastClaimAt?: number;
     lastClaimResult?: { claimed: number; failed: number };
@@ -417,6 +429,11 @@ export default function Home() {
     paperStats.totalBudgetCapUsd > 0
       ? (paperStats.totalBudgetUsedUsd / paperStats.totalBudgetCapUsd) * 100
       : 0;
+  const lastDiag = status?.state.lastStrategyDiagnostics;
+  const rejectedEntries = Object.entries(lastDiag?.rejectedReasons ?? {}).sort(
+    (a, b) => b[1] - a[1]
+  );
+  const rejectionTotal = rejectedEntries.reduce((sum, [, count]) => sum + count, 0);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -729,6 +746,62 @@ export default function Home() {
           </p>
           {paperStats.lastError && (
             <p className="text-xs text-red-400 mt-1">{paperStats.lastError}</p>
+          )}
+        </section>
+
+        {/* Strategy diagnostics */}
+        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">
+            Strategy diagnostics (last run)
+          </h2>
+          {lastDiag ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Evaluated</p>
+                  <p className="text-lg font-semibold text-zinc-200">{lastDiag.evaluatedSignals}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Eligible</p>
+                  <p className="text-lg font-semibold text-zinc-200">{lastDiag.eligibleSignals}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Executed/Paper</p>
+                  <p className="text-lg font-semibold text-zinc-200">
+                    {lastDiag.mode === "paper" ? lastDiag.paper : lastDiag.copied}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Budget used</p>
+                  <p className="text-lg font-semibold text-zinc-200">
+                    ${lastDiag.budgetUsedUsd.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-zinc-500 mb-3">
+                Mode: <span className="uppercase text-zinc-300">{lastDiag.mode}</span> · Rejections tracked: {rejectionTotal} ·
+                Updated: {new Date(lastDiag.timestamp).toLocaleString()}
+              </p>
+              {rejectedEntries.length > 0 ? (
+                <div className="space-y-1">
+                  {rejectedEntries.slice(0, 10).map(([reason, count]) => (
+                    <div
+                      key={reason}
+                      className="flex items-center justify-between text-xs rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-1.5"
+                    >
+                      <span className="text-zinc-300">{reason}</span>
+                      <span className="text-zinc-500">
+                        {count} ({rejectionTotal > 0 ? ((count / rejectionTotal) * 100).toFixed(1) : "0.0"}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-600">No rejections recorded in last run.</p>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-zinc-600">No run diagnostics yet. Trigger Run now or wait for worker cycle.</p>
           )}
         </section>
 

@@ -20,6 +20,7 @@ export async function GET() {
         lastRunAt: state.lastRunAt,
         lastCopiedAt: state.lastCopiedAt,
         lastError: state.lastError,
+        lastStrategyDiagnostics: state.lastStrategyDiagnostics,
         runsSinceLastClaim: state.runsSinceLastClaim,
         lastClaimAt: state.lastClaimAt,
         lastClaimResult: state.lastClaimResult,

@@ -47,6 +47,7 @@ export interface PairedStrategyResult {
   budgetUsedUsd: number;
   evaluatedSignals: number;
   eligibleSignals: number;
+  rejectedReasons: Record<string, number>;
   error?: string;
   lastTimestamp?: number;
   copiedKeys: string[];
@@ -160,8 +161,12 @@ export async function runPairedStrategy(
     budgetUsedUsd: 0,
     evaluatedSignals: 0,
     eligibleSignals: 0,
+    rejectedReasons: {},
     copiedKeys: [],
     copiedTrades: [],
+  };
+  const reject = (reason: string) => {
+    result.rejectedReasons[reason] = (result.rejectedReasons[reason] ?? 0) + 1;
   };
   if (mode === "off") {
     result.error = "Trading mode is off";
@@ -195,6 +200,9 @@ export async function runPairedStrategy(
 
   const signals = await getRecentPairSignals(lookbackSeconds);
   result.evaluatedSignals = signals.length;
+  if (signals.length === 0) {
+    reject("no_recent_signals");
+  }
 
   const copiedSet = new Set(state.copiedKeys);
   let client: ClobClient | null = null;
@@ -215,35 +223,63 @@ export async function runPairedStrategy(
   let lastTimestamp = state.lastTimestamp;
 
   for (const signal of signals) {
-    if (result.eligibleSignals >= maxMarketsPerRun) break;
-    if (remainingBudgetUsd < (mode === "live" ? 2 : 0.2)) break;
-    if (signal.edge < minEdge) continue;
-    if (signal.latestTimestamp <= state.lastTimestamp) continue;
+    if (result.eligibleSignals >= maxMarketsPerRun) {
+      reject("max_markets_per_run_reached");
+      break;
+    }
+    if (remainingBudgetUsd < (mode === "live" ? 2 : 0.2)) {
+      reject("insufficient_remaining_budget");
+      break;
+    }
+    if (signal.edge < minEdge) {
+      reject("edge_below_threshold");
+      continue;
+    }
+    if (signal.latestTimestamp <= state.lastTimestamp) {
+      reject("signal_not_new");
+      continue;
+    }
 
     const signalKey = `${signal.conditionId}|${signal.latestTimestamp}`;
-    if (copiedSet.has(signalKey)) continue;
+    if (copiedSet.has(signalKey)) {
+      reject("already_processed_signal");
+      continue;
+    }
 
     const [outcomeA, outcomeB] = signal.outcomes;
     const pairSum = signal.pairSum;
-    if (pairSum <= 0 || pairSum >= 2) continue;
+    if (pairSum <= 0 || pairSum >= 2) {
+      reject("invalid_pair_sum");
+      continue;
+    }
 
     let pairSpend = Math.min(pairChunkUsd, remainingBudgetUsd);
-    if (pairSpend <= 0) continue;
+    if (pairSpend <= 0) {
+      reject("pair_spend_non_positive");
+      continue;
+    }
     const shares = pairSpend / pairSum;
     let legAUsd = shares * outcomeA.price;
     let legBUsd = shares * outcomeB.price;
 
     if (legAUsd < minLegUsd || legBUsd < minLegUsd) {
+      reject("leg_below_min_bet");
       continue;
     }
     if (mode === "live") {
       if (legAUsd < POLYMARKET_MIN_ORDER_USD || legBUsd < POLYMARKET_MIN_ORDER_USD) {
-        if (!config.floorToPolymarketMin) continue;
+        if (!config.floorToPolymarketMin) {
+          reject("leg_below_polymarket_min_no_floor");
+          continue;
+        }
         legAUsd = Math.max(POLYMARKET_MIN_ORDER_USD, legAUsd);
         legBUsd = Math.max(POLYMARKET_MIN_ORDER_USD, legBUsd);
       }
       pairSpend = legAUsd + legBUsd;
-      if (pairSpend > remainingBudgetUsd) continue;
+      if (pairSpend > remainingBudgetUsd) {
+        reject("pair_exceeds_remaining_budget");
+        continue;
+      }
     }
 
     result.eligibleSignals++;
@@ -327,6 +363,7 @@ export async function runPairedStrategy(
         });
       } else {
         result.failed++;
+        reject("live_order_rejected");
         const errorA = respA?.errorMsg ?? "legA failed";
         const errorB = respB?.errorMsg ?? "legB failed";
         const next = result.error
@@ -336,6 +373,7 @@ export async function runPairedStrategy(
       }
     } catch (e) {
       result.failed++;
+      reject("live_order_exception");
       const errStr = e instanceof Error ? e.message : String(e);
       const next = result.error ? `${result.error}; ${errStr}` : errStr;
       result.error = next.length > 500 ? `${next.slice(0, 497)}...` : next;
