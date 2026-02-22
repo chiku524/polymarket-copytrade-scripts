@@ -5,6 +5,7 @@ const CONFIG_KEY = "copy_trader_config";
 const STATE_KEY = "copy_trader_state";
 const ACTIVITY_KEY = "copy_trader_activity";
 const RUN_LOCK_KEY = "copy_trader_run_lock";
+const PAPER_STATS_KEY = "copy_trader_paper_stats";
 
 export type TradingMode = "off" | "paper" | "live";
 
@@ -48,6 +49,28 @@ export interface RecentActivity {
   timestamp: number;
 }
 
+export interface PaperRunStat {
+  timestamp: number;
+  simulatedTrades: number;
+  simulatedVolumeUsd: number;
+  failed: number;
+  budgetCapUsd: number;
+  budgetUsedUsd: number;
+  error?: string;
+}
+
+export interface PaperStats {
+  totalRuns: number;
+  totalSimulatedTrades: number;
+  totalSimulatedVolumeUsd: number;
+  totalFailed: number;
+  totalBudgetCapUsd: number;
+  totalBudgetUsedUsd: number;
+  lastRunAt?: number;
+  lastError?: string;
+  recentRuns: PaperRunStat[];
+}
+
 const DEFAULT_CONFIG: CopyTraderConfig = {
   enabled: false,
   mode: "off",
@@ -57,6 +80,16 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   minBetUsd: 0.1,
   stopLossBalance: 0,
   floorToPolymarketMin: true,
+};
+
+const DEFAULT_PAPER_STATS: PaperStats = {
+  totalRuns: 0,
+  totalSimulatedTrades: 0,
+  totalSimulatedVolumeUsd: 0,
+  totalFailed: 0,
+  totalBudgetCapUsd: 0,
+  totalBudgetUsedUsd: 0,
+  recentRuns: [],
 };
 
 function toFiniteNumber(value: unknown, fallback: number): number {
@@ -177,6 +210,64 @@ export async function appendActivity(trades: RecentActivity[]): Promise<void> {
   const current = await getRecentActivity();
   const updated = [...trades, ...current].slice(0, 50);
   await kv.set(ACTIVITY_KEY, updated);
+}
+
+export async function getPaperStats(): Promise<PaperStats> {
+  const s = await kv.get<PaperStats>(PAPER_STATS_KEY);
+  if (!s) return { ...DEFAULT_PAPER_STATS };
+  return {
+    totalRuns: toFiniteNumber(s.totalRuns, 0),
+    totalSimulatedTrades: toFiniteNumber(s.totalSimulatedTrades, 0),
+    totalSimulatedVolumeUsd: toFiniteNumber(s.totalSimulatedVolumeUsd, 0),
+    totalFailed: toFiniteNumber(s.totalFailed, 0),
+    totalBudgetCapUsd: toFiniteNumber(s.totalBudgetCapUsd, 0),
+    totalBudgetUsedUsd: toFiniteNumber(s.totalBudgetUsedUsd, 0),
+    lastRunAt: s.lastRunAt,
+    lastError: s.lastError,
+    recentRuns: Array.isArray(s.recentRuns)
+      ? s.recentRuns
+          .map((r) => ({
+            timestamp: toFiniteNumber(r.timestamp, Date.now()),
+            simulatedTrades: toFiniteNumber(r.simulatedTrades, 0),
+            simulatedVolumeUsd: toFiniteNumber(r.simulatedVolumeUsd, 0),
+            failed: toFiniteNumber(r.failed, 0),
+            budgetCapUsd: toFiniteNumber(r.budgetCapUsd, 0),
+            budgetUsedUsd: toFiniteNumber(r.budgetUsedUsd, 0),
+            error: typeof r.error === "string" ? r.error : undefined,
+          }))
+          .slice(0, 100)
+      : [],
+  };
+}
+
+export async function recordPaperRun(run: PaperRunStat): Promise<PaperStats> {
+  const current = await getPaperStats();
+  const normalizedRun: PaperRunStat = {
+    timestamp: toFiniteNumber(run.timestamp, Date.now()),
+    simulatedTrades: toFiniteNumber(run.simulatedTrades, 0),
+    simulatedVolumeUsd: toFiniteNumber(run.simulatedVolumeUsd, 0),
+    failed: toFiniteNumber(run.failed, 0),
+    budgetCapUsd: toFiniteNumber(run.budgetCapUsd, 0),
+    budgetUsedUsd: toFiniteNumber(run.budgetUsedUsd, 0),
+    error: run.error,
+  };
+  const updated: PaperStats = {
+    totalRuns: current.totalRuns + 1,
+    totalSimulatedTrades: current.totalSimulatedTrades + normalizedRun.simulatedTrades,
+    totalSimulatedVolumeUsd: current.totalSimulatedVolumeUsd + normalizedRun.simulatedVolumeUsd,
+    totalFailed: current.totalFailed + normalizedRun.failed,
+    totalBudgetCapUsd: current.totalBudgetCapUsd + normalizedRun.budgetCapUsd,
+    totalBudgetUsedUsd: current.totalBudgetUsedUsd + normalizedRun.budgetUsedUsd,
+    lastRunAt: normalizedRun.timestamp,
+    lastError: normalizedRun.error,
+    recentRuns: [normalizedRun, ...current.recentRuns].slice(0, 100),
+  };
+  await kv.set(PAPER_STATS_KEY, updated);
+  return updated;
+}
+
+export async function resetPaperStats(): Promise<void> {
+  await kv.set(PAPER_STATS_KEY, { ...DEFAULT_PAPER_STATS });
 }
 
 export async function acquireRunLock(ttlSeconds = 120): Promise<string | null> {

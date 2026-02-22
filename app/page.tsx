@@ -58,6 +58,25 @@ interface Status {
   };
   cashBalance: number;
   recentActivity: { title: string; outcome: string; side: string; amountUsd: number; price: number; timestamp: number }[];
+  paperStats?: {
+    totalRuns: number;
+    totalSimulatedTrades: number;
+    totalSimulatedVolumeUsd: number;
+    totalFailed: number;
+    totalBudgetCapUsd: number;
+    totalBudgetUsedUsd: number;
+    lastRunAt?: number;
+    lastError?: string;
+    recentRuns: {
+      timestamp: number;
+      simulatedTrades: number;
+      simulatedVolumeUsd: number;
+      failed: number;
+      budgetCapUsd: number;
+      budgetUsedUsd: number;
+      error?: string;
+    }[];
+  };
 }
 
 interface Position {
@@ -88,6 +107,7 @@ export default function Home() {
   const [runResult, setRunResult] = useState<string | null>(null);
   const [cashingOut, setCashingOut] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [resettingPaperStats, setResettingPaperStats] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [claimResult, setClaimResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -196,8 +216,11 @@ export default function Home() {
           setRunResult("Skipped");
         }
       } else if (data.mode === "paper") {
+        const simVolume = Number(data.simulatedVolumeUsd ?? 0);
         if (data.paper > 0) {
-          setRunResult(`Paper simulated ${data.paper} trade${data.paper === 1 ? "" : "s"}`);
+          setRunResult(
+            `Paper simulated ${data.paper} trade${data.paper === 1 ? "" : "s"} · $${simVolume.toFixed(2)}`
+          );
         } else {
           setRunResult("Paper mode: no new trades");
         }
@@ -231,6 +254,24 @@ export default function Home() {
       setError(e instanceof Error ? e.message : "Reset failed");
     } finally {
       setResetting(false);
+    }
+  };
+
+  const resetPaperAnalytics = async () => {
+    setResettingPaperStats(true);
+    setError(null);
+    try {
+      const base = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetchWithTimeout(`${base}/api/paper-stats`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Reset paper stats failed");
+      await fetchAll(true);
+      setRunResult("Paper analytics reset");
+      setTimeout(() => setRunResult(null), 4000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Reset paper stats failed");
+    } finally {
+      setResettingPaperStats(false);
     }
   };
 
@@ -345,6 +386,21 @@ export default function Home() {
     floorToPolymarketMin: true,
   };
   const activity = status?.recentActivity ?? [];
+  const paperStats = status?.paperStats ?? {
+    totalRuns: 0,
+    totalSimulatedTrades: 0,
+    totalSimulatedVolumeUsd: 0,
+    totalFailed: 0,
+    totalBudgetCapUsd: 0,
+    totalBudgetUsedUsd: 0,
+    recentRuns: [],
+  };
+  const avgTradesPerRun =
+    paperStats.totalRuns > 0 ? paperStats.totalSimulatedTrades / paperStats.totalRuns : 0;
+  const avgBudgetUsagePct =
+    paperStats.totalBudgetCapUsd > 0
+      ? (paperStats.totalBudgetUsedUsd / paperStats.totalBudgetCapUsd) * 100
+      : 0;
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -573,10 +629,58 @@ export default function Home() {
           </div>
         </section>
 
+        {/* Paper analytics */}
+        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                Paper analytics
+              </h2>
+              <p className="text-xs text-zinc-600 mt-1">
+                Tracks simulated runs to validate behavior before Live mode.
+              </p>
+            </div>
+            <button
+              onClick={resetPaperAnalytics}
+              disabled={resettingPaperStats}
+              className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs disabled:opacity-50"
+            >
+              {resettingPaperStats ? "Resetting…" : "Reset paper stats"}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Runs</p>
+              <p className="text-lg font-semibold text-zinc-200">{paperStats.totalRuns}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Simulated trades</p>
+              <p className="text-lg font-semibold text-zinc-200">{paperStats.totalSimulatedTrades}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Sim volume</p>
+              <p className="text-lg font-semibold text-zinc-200">${paperStats.totalSimulatedVolumeUsd.toFixed(2)}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Avg budget used</p>
+              <p className="text-lg font-semibold text-zinc-200">{avgBudgetUsagePct.toFixed(1)}%</p>
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Avg trades/run: {avgTradesPerRun.toFixed(2)} · Failed runs: {paperStats.totalFailed}
+            {paperStats.lastRunAt ? ` · Last paper run: ${new Date(paperStats.lastRunAt).toLocaleString()}` : ""}
+          </p>
+          {paperStats.lastError && (
+            <p className="text-xs text-red-400 mt-1">{paperStats.lastError}</p>
+          )}
+        </section>
+
         {/* Recent activity */}
         {activity.length > 0 && (
           <section className="mb-8">
-            <h2 className="text-sm font-medium text-zinc-400 mb-3">Recently copied</h2>
+            <h2 className="text-sm font-medium text-zinc-400 mb-3">
+              {cfg.mode === "paper" ? "Recently simulated" : "Recently copied"}
+            </h2>
             <div className="space-y-2">
               {activity.slice(0, 8).map((a, i) => (
                 <div

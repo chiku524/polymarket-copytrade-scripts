@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
-import { getConfig, getState, setState, appendActivity, acquireRunLock, releaseRunLock } from "@/lib/kv";
+import {
+  getConfig,
+  getState,
+  setState,
+  appendActivity,
+  acquireRunLock,
+  releaseRunLock,
+  recordPaperRun,
+} from "@/lib/kv";
 import { runCopyTrade } from "@/lib/copy-trade";
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
@@ -65,12 +73,24 @@ export async function POST() {
     if (result.copiedTrades?.length) {
       await appendActivity(result.copiedTrades);
     }
+    if (result.mode === "paper") {
+      await recordPaperRun({
+        timestamp: Date.now(),
+        simulatedTrades: result.paper,
+        simulatedVolumeUsd: result.simulatedVolumeUsd,
+        failed: result.failed,
+        budgetCapUsd: result.budgetCapUsd,
+        budgetUsedUsd: result.budgetUsedUsd,
+        error: result.error,
+      });
+    }
 
     return NextResponse.json({
       ok: true,
       mode: result.mode,
       copied: result.copied,
       paper: result.paper,
+      simulatedVolumeUsd: result.simulatedVolumeUsd,
       failed: result.failed,
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,

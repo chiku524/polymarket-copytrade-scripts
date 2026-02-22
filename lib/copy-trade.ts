@@ -91,6 +91,7 @@ export interface CopyTradeResult {
   copied: number;
   failed: number;
   paper: number;
+  simulatedVolumeUsd: number;
   mode: TradingMode;
   budgetCapUsd: number;
   budgetUsedUsd: number;
@@ -121,6 +122,7 @@ export async function runCopyTrade(
     copied: 0,
     failed: 0,
     paper: 0,
+    simulatedVolumeUsd: 0,
     mode,
     budgetCapUsd: 0,
     budgetUsedUsd: 0,
@@ -222,6 +224,7 @@ export async function runCopyTrade(
       lastTimestamp = Math.max(lastTimestamp ?? 0, ts);
       result.copied++;
       result.paper++;
+      result.simulatedVolumeUsd += betUsd;
       remainingBudgetUsd = Math.max(0, remainingBudgetUsd - betUsd);
       result.copiedTrades.push({
         title: act.title ?? "Unknown",

@@ -64,6 +64,7 @@ Control behavior from UI:
 - **Off** = pause (worker keeps running but places no new orders)
 - **Paper** = simulate only
 - **Live** = real orders
+- Paper analytics can be viewed in UI and via `GET /api/paper-stats` (reset with `DELETE /api/paper-stats`).
 
 To avoid duplicate triggers, run **either** cron **or** worker (not both).
 
