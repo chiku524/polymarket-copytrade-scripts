@@ -14,7 +14,7 @@ export async function POST() {
     await resetSyncState();
     return NextResponse.json({
       ok: true,
-      message: "Sync state reset. Next run will copy trades from the last 5 minutes.",
+      message: "Strategy sync state reset. Next run will treat signals as fresh.",
     });
   } catch (e) {
     console.error("Reset error:", e);

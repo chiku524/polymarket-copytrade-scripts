@@ -25,6 +25,8 @@ export async function GET() {
     const lastTs = state.lastTimestamp ?? 0;
     const isFirstRun = lastTs === 0 && copiedSet.size === 0;
     const fiveMinAgo = nowSec - 300;
+    const walletRunCapUsd = (cashBalance * config.walletUsagePercent) / 100;
+    let budgetRemainingUsd = walletRunCapUsd;
 
     // Per-trade copy analysis (dry run)
     const tradeAnalysis: Array<{
@@ -45,7 +47,11 @@ export async function GET() {
       const sideStr = (act.side ?? "BUY").toUpperCase();
       const price = act.price;
       const targetBetUsd = act.usdcSize ?? (act.size ?? 0) * price;
-      const rawAmount = Math.min((targetBetUsd * config.copyPercent) / 100, config.maxBetUsd);
+      const rawAmount = Math.min(
+        (targetBetUsd * config.copyPercent) / 100,
+        config.maxBetUsd,
+        Math.max(0, budgetRemainingUsd)
+      );
       let ourBetUsd = rawAmount >= config.minBetUsd ? rawAmount : 0;
       if (ourBetUsd === 0 && floorToPolymarketMin && rawAmount > 0 && rawAmount < POLYMARKET_MIN_USD) {
         ourBetUsd = POLYMARKET_MIN_USD;
@@ -72,6 +78,7 @@ export async function GET() {
       } else {
         wouldCopy = true;
         reason = ourBetUsd > rawAmount ? `would copy (floor to $1, raw $${rawAmount.toFixed(2)})` : "would copy";
+        budgetRemainingUsd = Math.max(0, budgetRemainingUsd - ourBetUsd);
       }
 
       tradeAnalysis.push({
@@ -119,9 +126,9 @@ export async function GET() {
         activityCount: targetActivity.length,
       },
       diagnosis: {
-        willCopyNewTrades: config.enabled && latestTs > lastTs,
-        reason: !config.enabled
-          ? "Copy trading is disabled"
+        willCopyNewTrades: config.mode !== "off" && latestTs > lastTs,
+        reason: config.mode === "off"
+          ? "Trading mode is off"
           : latestTs <= lastTs
             ? `Latest trade (${latestTs}) is older than lastTimestamp (${lastTs}) - already synced`
             : wouldCopyCount > 0
@@ -130,6 +137,11 @@ export async function GET() {
       },
       tradeAnalysis,
       hints: [cronHint, copyPercentHint].filter(Boolean),
+      walletBudget: {
+        walletUsagePercent: config.walletUsagePercent,
+        runCapUsd: walletRunCapUsd,
+        remainingUsd: budgetRemainingUsd,
+      },
       geoblock: {
         blocked: geoblock.blocked,
         country: geoblock.country,

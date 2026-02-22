@@ -36,6 +36,12 @@ function useDebouncedCallback<A extends unknown[]>(
 
 interface Config {
   enabled: boolean;
+  mode: "off" | "paper" | "live";
+  walletUsagePercent: number;
+  pairChunkUsd: number;
+  pairMinEdgeCents: number;
+  pairLookbackSeconds: number;
+  pairMaxMarketsPerRun: number;
   copyPercent: number;
   maxBetUsd: number;
   minBetUsd: number;
@@ -50,12 +56,43 @@ interface Status {
     lastRunAt?: number;
     lastCopiedAt?: number;
     lastError?: string;
+    lastStrategyDiagnostics?: {
+      mode: "off" | "paper" | "live";
+      evaluatedSignals: number;
+      eligibleSignals: number;
+      rejectedReasons: Record<string, number>;
+      copied: number;
+      paper: number;
+      failed: number;
+      budgetCapUsd: number;
+      budgetUsedUsd: number;
+      timestamp: number;
+    };
     runsSinceLastClaim?: number;
     lastClaimAt?: number;
     lastClaimResult?: { claimed: number; failed: number };
   };
   cashBalance: number;
   recentActivity: { title: string; outcome: string; side: string; amountUsd: number; price: number; timestamp: number }[];
+  paperStats?: {
+    totalRuns: number;
+    totalSimulatedTrades: number;
+    totalSimulatedVolumeUsd: number;
+    totalFailed: number;
+    totalBudgetCapUsd: number;
+    totalBudgetUsedUsd: number;
+    lastRunAt?: number;
+    lastError?: string;
+    recentRuns: {
+      timestamp: number;
+      simulatedTrades: number;
+      simulatedVolumeUsd: number;
+      failed: number;
+      budgetCapUsd: number;
+      budgetUsedUsd: number;
+      error?: string;
+    }[];
+  };
 }
 
 interface Position {
@@ -86,6 +123,7 @@ export default function Home() {
   const [runResult, setRunResult] = useState<string | null>(null);
   const [cashingOut, setCashingOut] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [resettingPaperStats, setResettingPaperStats] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [claimResult, setClaimResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -139,8 +177,13 @@ export default function Home() {
 
   const updateConfig = useCallback(async (updates: Partial<Config>, optimistic?: boolean) => {
     if (!status) return;
-    if (optimistic && "enabled" in updates) {
-      const nextConfig = { ...status.config, ...updates };
+    const previousConfig = status.config;
+    if (optimistic) {
+      const nextConfig = {
+        ...status.config,
+        ...updates,
+        ...(updates.mode ? { enabled: updates.mode !== "off" } : {}),
+      };
       configRef.current = nextConfig;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: nextConfig } : null));
@@ -160,10 +203,9 @@ export default function Home() {
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: data } : null));
     } catch (e) {
-      if (optimistic && "enabled" in updates) {
-        const revertedConfig = { ...status.config, enabled: !updates.enabled };
-        configRef.current = revertedConfig;
-        setStatus((s) => (s ? { ...s, config: revertedConfig } : null));
+      if (optimistic) {
+        configRef.current = previousConfig;
+        setStatus((s) => (s ? { ...s, config: previousConfig } : null));
       }
       setError(e instanceof Error ? e.message : "Failed to save");
     } finally {
@@ -182,13 +224,32 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error ?? "Failed");
       await fetchAll(true);
       if (data.skipped) {
-        setRunResult("Skipped (copy trading is disabled)");
+        if (data.reason === "mode_off") {
+          setRunResult("Skipped (mode is Off)");
+        } else if (data.reason === "busy") {
+          setRunResult("Skipped (another run is in progress)");
+        } else {
+          setRunResult("Skipped");
+        }
+      } else if (data.mode === "paper") {
+        const simVolume = Number(data.simulatedVolumeUsd ?? 0);
+        if (data.paper > 0) {
+          setRunResult(
+            `Paper simulated ${data.paper} pair${data.paper === 1 ? "" : "s"} · $${simVolume.toFixed(2)}`
+          );
+        } else {
+          const eligible = Number(data.eligibleSignals ?? 0);
+          const evaluated = Number(data.evaluatedSignals ?? 0);
+          setRunResult(`Paper mode: no fills (${eligible}/${evaluated} eligible/evaluated)`);
+        }
       } else if (data.error && (data.error.startsWith("Stop-loss") || data.error.startsWith("Low balance"))) {
         setRunResult(data.error);
       } else if (data.copied > 0) {
-        setRunResult(`Copied ${data.copied} trade${data.copied === 1 ? "" : "s"}`);
+        setRunResult(`Executed ${data.copied} paired signal${data.copied === 1 ? "" : "s"}`);
       } else {
-        setRunResult("No new trades to copy");
+        const eligible = Number(data.eligibleSignals ?? 0);
+        const evaluated = Number(data.evaluatedSignals ?? 0);
+        setRunResult(`No paired entries (${eligible}/${evaluated} eligible/evaluated)`);
       }
       setTimeout(() => setRunResult(null), 5000);
     } catch (e) {
@@ -213,6 +274,24 @@ export default function Home() {
       setError(e instanceof Error ? e.message : "Reset failed");
     } finally {
       setResetting(false);
+    }
+  };
+
+  const resetPaperAnalytics = async () => {
+    setResettingPaperStats(true);
+    setError(null);
+    try {
+      const base = typeof window !== "undefined" ? window.location.origin : "";
+      const res = await fetchWithTimeout(`${base}/api/paper-stats`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Reset paper stats failed");
+      await fetchAll(true);
+      setRunResult("Paper analytics reset");
+      setTimeout(() => setRunResult(null), 4000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Reset paper stats failed");
+    } finally {
+      setResettingPaperStats(false);
     }
   };
 
@@ -265,7 +344,7 @@ export default function Home() {
     }
   };
 
-  const toggleEnabled = () => updateConfig({ enabled: !status?.config.enabled }, true);
+  const setMode = (mode: Config["mode"]) => updateConfig({ mode }, true);
 
   const debouncedUpdateConfig = useDebouncedCallback(
     (updates: Partial<Config>) => updateConfig(updates, false),
@@ -275,7 +354,22 @@ export default function Home() {
   const handleNumericConfigChange = useCallback(
     (field: keyof Config, value: number, min: number, max: number) => {
       const clamped = Math.max(min, Math.min(max, value));
-      const nextConfig = { ...(status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1, stopLossBalance: 0 }), [field]: clamped };
+      const nextConfig = {
+        ...(status?.config ?? {
+          enabled: false,
+          mode: "off" as const,
+          walletUsagePercent: 25,
+          pairChunkUsd: 3,
+          pairMinEdgeCents: 0.5,
+          pairLookbackSeconds: 120,
+          pairMaxMarketsPerRun: 4,
+          copyPercent: 5,
+          maxBetUsd: 3,
+          minBetUsd: 0.1,
+          stopLossBalance: 0,
+        }),
+        [field]: clamped,
+      };
       configRef.current = nextConfig;
       configUpdatedAtRef.current = Date.now();
       setStatus((s) => (s ? { ...s, config: nextConfig } : null));
@@ -305,17 +399,50 @@ export default function Home() {
     );
   }
 
-  const cfg = status?.config ?? { enabled: false, copyPercent: 5, maxBetUsd: 3, minBetUsd: 0.1, stopLossBalance: 0, floorToPolymarketMin: true };
+  const cfg = status?.config ?? {
+    enabled: false,
+    mode: "off" as const,
+    walletUsagePercent: 25,
+    pairChunkUsd: 3,
+    pairMinEdgeCents: 0.5,
+    pairLookbackSeconds: 120,
+    pairMaxMarketsPerRun: 4,
+    copyPercent: 5,
+    maxBetUsd: 3,
+    minBetUsd: 0.1,
+    stopLossBalance: 0,
+    floorToPolymarketMin: true,
+  };
   const activity = status?.recentActivity ?? [];
+  const paperStats = status?.paperStats ?? {
+    totalRuns: 0,
+    totalSimulatedTrades: 0,
+    totalSimulatedVolumeUsd: 0,
+    totalFailed: 0,
+    totalBudgetCapUsd: 0,
+    totalBudgetUsedUsd: 0,
+    recentRuns: [],
+  };
+  const avgTradesPerRun =
+    paperStats.totalRuns > 0 ? paperStats.totalSimulatedTrades / paperStats.totalRuns : 0;
+  const avgBudgetUsagePct =
+    paperStats.totalBudgetCapUsd > 0
+      ? (paperStats.totalBudgetUsedUsd / paperStats.totalBudgetCapUsd) * 100
+      : 0;
+  const lastDiag = status?.state.lastStrategyDiagnostics;
+  const rejectedEntries = Object.entries(lastDiag?.rejectedReasons ?? {}).sort(
+    (a, b) => b[1] - a[1]
+  );
+  const rejectionTotal = rejectedEntries.reduce((sum, [, count]) => sum + count, 0);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
       <div className="max-w-2xl mx-auto p-6 md:p-8">
         {/* Header */}
         <header className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight">Polymarket Copy Trader</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Polymarket Paired Trader</h1>
           <p className="mt-1 text-zinc-500">
-            Copying <span className="text-emerald-400">gabagool22</span> → your account
+            Running <span className="text-emerald-400">paired BTC/ETH Up-Down strategy</span> on your account
           </p>
         </header>
 
@@ -333,7 +460,7 @@ export default function Home() {
 
         {/* Note: no need to keep UI open */}
         <p className="mb-4 text-xs text-zinc-500">
-          You don&apos;t need to keep this page open. When the toggle is on, set up a cron (e.g. cron-job.org) to GET your-app-url/api/copy-trade every minute with <code className="bg-zinc-800 px-1 rounded">Authorization: Bearer YOUR_CRON_SECRET</code>. Resolved winnings are claimed automatically every 10 copy-trade runs, or use Claim now.
+          Set mode to <strong>Off</strong>, <strong>Paper</strong>, or <strong>Live</strong> below. Paper simulates paired strategy entries without placing orders. Live places your own strategy bets and respects your wallet usage cap. The worker or cron can call <code className="bg-zinc-800 px-1 rounded">/api/copy-trade</code> to run each cycle.
         </p>
 
         {/* Balance + Control bar */}
@@ -343,26 +470,31 @@ export default function Home() {
             <p className="text-2xl font-semibold text-emerald-400">
               ${(status?.cashBalance ?? 0).toFixed(2)}
             </p>
+            <p className="text-xs text-zinc-500 mt-1">
+              Mode: <span className="uppercase text-zinc-300">{cfg.mode}</span>
+            </p>
           </div>
           <div className="flex items-center gap-4">
-            <button
-              role="switch"
-              aria-checked={cfg.enabled}
-              onClick={toggleEnabled}
-              disabled={saving}
-              className={`
-                relative w-14 h-8 rounded-full transition-colors flex-shrink-0
-                ${cfg.enabled ? "bg-emerald-500" : "bg-zinc-700"}
-                ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
-              `}
-            >
-              <span
-                className={`
-                  absolute top-1 w-6 h-6 rounded-full bg-white shadow transition-transform
-                  ${cfg.enabled ? "left-7 translate-x-[-2px]" : "left-1"}
-                `}
-              />
-            </button>
+            <div className="flex items-center gap-2 rounded-lg bg-zinc-800/70 p-1">
+              {(["off", "paper", "live"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setMode(mode)}
+                  disabled={saving}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium uppercase tracking-wide transition-colors disabled:opacity-50 ${
+                    cfg.mode === mode
+                      ? mode === "live"
+                        ? "bg-emerald-500/30 text-emerald-300"
+                        : mode === "paper"
+                          ? "bg-sky-500/30 text-sky-300"
+                          : "bg-zinc-700 text-zinc-200"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
             <div className="flex flex-col items-end gap-1">
               <div className="flex flex-wrap gap-2">
                 <button
@@ -396,25 +528,25 @@ export default function Home() {
 
         {/* Settings */}
         <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Bet size</h2>
+          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-4">Trade controls</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Copying at <strong>{cfg.copyPercent}%</strong> of gabagool22&apos;s bet, max <strong>${cfg.maxBetUsd}</strong> per trade
+            Running a paired BTC/ETH Up-Down strategy with chunk size <strong>${cfg.pairChunkUsd}</strong>, minimum edge <strong>{cfg.pairMinEdgeCents.toFixed(1)}¢</strong>, and wallet cap <strong>{cfg.walletUsagePercent}%</strong> per run.
           </p>
           <div className="flex flex-wrap gap-6">
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Copy %</p>
+              <p className="text-xs text-zinc-500 mb-1">Min edge (cents)</p>
               <input
                 type="number"
-                min={1}
-                max={100}
-                step={1}
-                value={cfg.copyPercent}
+                min={0}
+                max={50}
+                step={0.1}
+                value={cfg.pairMinEdgeCents}
                 onChange={(e) =>
                   handleNumericConfigChange(
-                    "copyPercent",
-                    parseInt(e.target.value, 10) || 5,
-                    1,
-                    100
+                    "pairMinEdgeCents",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    50
                   )
                 }
                 disabled={saving}
@@ -422,17 +554,38 @@ export default function Home() {
               />
             </div>
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Max bet (USDC)</p>
+              <p className="text-xs text-zinc-500 mb-1">Pair chunk (USDC)</p>
+              <input
+                type="number"
+                min={1}
+                max={10000}
+                step="any"
+                value={cfg.pairChunkUsd}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairChunkUsd",
+                    parseFloat(e.target.value) || 3,
+                    1,
+                    10000
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Target spend per paired signal</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Wallet usage % / run</p>
               <input
                 type="number"
                 min={1}
                 max={100}
-                step="any"
-                value={cfg.maxBetUsd}
+                step={1}
+                value={cfg.walletUsagePercent}
                 onChange={(e) =>
                   handleNumericConfigChange(
-                    "maxBetUsd",
-                    parseFloat(e.target.value) || 3,
+                    "walletUsagePercent",
+                    parseInt(e.target.value, 10) || 25,
                     1,
                     100
                   )
@@ -440,7 +593,48 @@ export default function Home() {
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Polymarket min $1 per order</p>
+              <p className="text-xs text-zinc-500 mt-0.5">Caps spend per run in Live/Paper</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Signal lookback (sec)</p>
+              <input
+                type="number"
+                min={20}
+                max={900}
+                step={5}
+                value={cfg.pairLookbackSeconds}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairLookbackSeconds",
+                    parseInt(e.target.value, 10) || 120,
+                    20,
+                    900
+                  )
+                }
+                disabled={saving}
+                className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+              <p className="text-xs text-zinc-500 mt-0.5">Recent global trades used for signals</p>
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Max pairs / run</p>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                step={1}
+                value={cfg.pairMaxMarketsPerRun}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairMaxMarketsPerRun",
+                    parseInt(e.target.value, 10) || 4,
+                    1,
+                    20
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -463,7 +657,7 @@ export default function Home() {
               </button>
               <div>
                 <p className="text-xs text-zinc-500">Floor to $1</p>
-                <p className="text-xs text-zinc-600">Round small bets up to $1 to copy more trades</p>
+                <p className="text-xs text-zinc-600">Round small paired legs up to Polymarket min order</p>
               </div>
             </div>
             <div>
@@ -504,15 +698,119 @@ export default function Home() {
                 disabled={saving}
                 className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
-              <p className="text-xs text-zinc-500 mt-0.5">Stops copying when balance falls below this (0 = off)</p>
+              <p className="text-xs text-zinc-500 mt-0.5">Stops strategy when balance falls below this (0 = off)</p>
             </div>
           </div>
+        </section>
+
+        {/* Paper analytics */}
+        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                Paper analytics
+              </h2>
+              <p className="text-xs text-zinc-600 mt-1">
+                Tracks simulated runs to validate behavior before Live mode.
+              </p>
+            </div>
+            <button
+              onClick={resetPaperAnalytics}
+              disabled={resettingPaperStats}
+              className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs disabled:opacity-50"
+            >
+              {resettingPaperStats ? "Resetting…" : "Reset paper stats"}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Runs</p>
+              <p className="text-lg font-semibold text-zinc-200">{paperStats.totalRuns}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Simulated pairs</p>
+              <p className="text-lg font-semibold text-zinc-200">{paperStats.totalSimulatedTrades}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Sim volume</p>
+              <p className="text-lg font-semibold text-zinc-200">${paperStats.totalSimulatedVolumeUsd.toFixed(2)}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Avg budget used</p>
+              <p className="text-lg font-semibold text-zinc-200">{avgBudgetUsagePct.toFixed(1)}%</p>
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Avg pairs/run: {avgTradesPerRun.toFixed(2)} · Failed runs: {paperStats.totalFailed}
+            {paperStats.lastRunAt ? ` · Last paper run: ${new Date(paperStats.lastRunAt).toLocaleString()}` : ""}
+          </p>
+          {paperStats.lastError && (
+            <p className="text-xs text-red-400 mt-1">{paperStats.lastError}</p>
+          )}
+        </section>
+
+        {/* Strategy diagnostics */}
+        <section className="mb-8 p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">
+            Strategy diagnostics (last run)
+          </h2>
+          {lastDiag ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Evaluated</p>
+                  <p className="text-lg font-semibold text-zinc-200">{lastDiag.evaluatedSignals}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Eligible</p>
+                  <p className="text-lg font-semibold text-zinc-200">{lastDiag.eligibleSignals}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Executed/Paper</p>
+                  <p className="text-lg font-semibold text-zinc-200">
+                    {lastDiag.mode === "paper" ? lastDiag.paper : lastDiag.copied}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Budget used</p>
+                  <p className="text-lg font-semibold text-zinc-200">
+                    ${lastDiag.budgetUsedUsd.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-zinc-500 mb-3">
+                Mode: <span className="uppercase text-zinc-300">{lastDiag.mode}</span> · Rejections tracked: {rejectionTotal} ·
+                Updated: {new Date(lastDiag.timestamp).toLocaleString()}
+              </p>
+              {rejectedEntries.length > 0 ? (
+                <div className="space-y-1">
+                  {rejectedEntries.slice(0, 10).map(([reason, count]) => (
+                    <div
+                      key={reason}
+                      className="flex items-center justify-between text-xs rounded-md bg-zinc-900/70 border border-zinc-800 px-2 py-1.5"
+                    >
+                      <span className="text-zinc-300">{reason}</span>
+                      <span className="text-zinc-500">
+                        {count} ({rejectionTotal > 0 ? ((count / rejectionTotal) * 100).toFixed(1) : "0.0"}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-600">No rejections recorded in last run.</p>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-zinc-600">No run diagnostics yet. Trigger Run now or wait for worker cycle.</p>
+          )}
         </section>
 
         {/* Recent activity */}
         {activity.length > 0 && (
           <section className="mb-8">
-            <h2 className="text-sm font-medium text-zinc-400 mb-3">Recently copied</h2>
+            <h2 className="text-sm font-medium text-zinc-400 mb-3">
+              {cfg.mode === "paper" ? "Recently simulated" : "Recently executed"}
+            </h2>
             <div className="space-y-2">
               {activity.slice(0, 8).map((a, i) => (
                 <div
@@ -679,14 +977,14 @@ export default function Home() {
         {/* Status footer */}
         <footer className="mt-8 pt-6 border-t border-zinc-800/60 text-xs text-zinc-500">
           Last run: {status?.state.lastRunAt ? new Date(status.state.lastRunAt).toLocaleString() : "—"} ·{" "}
-          Last copied: {status?.state.lastCopiedAt ? new Date(status.state.lastCopiedAt).toLocaleString() : "—"}
+          Last execution: {status?.state.lastCopiedAt ? new Date(status.state.lastCopiedAt).toLocaleString() : "—"}
           {" · "}
           Last claim: {status?.state.lastClaimAt ? new Date(status.state.lastClaimAt).toLocaleString() : "—"}
           {status?.state.lastClaimResult && (
             <span> ({status.state.lastClaimResult.claimed} claimed)</span>
           )}
           {status?.state.runsSinceLastClaim != null && (
-            <span className="block mt-0.5 text-zinc-600">Claim runs every 10 copy-trade runs ({status.state.runsSinceLastClaim}/10)</span>
+            <span className="block mt-0.5 text-zinc-600">Claim runs every 10 strategy runs ({status.state.runsSinceLastClaim}/10)</span>
           )}
           {status?.state.lastError && (
             <span className="block mt-1 text-red-400">{status.state.lastError}</span>

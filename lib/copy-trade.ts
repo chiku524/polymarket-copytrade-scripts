@@ -8,6 +8,7 @@ const CHAIN_ID = 137;
 
 /** Polymarket requires minimum $1 for market orders */
 const POLYMARKET_MIN_ORDER_USD = 1;
+type TradingMode = "off" | "paper" | "live";
 
 export async function getCashBalance(address: string): Promise<number> {
   const res = await fetch(
@@ -89,6 +90,11 @@ export interface CopiedTrade {
 export interface CopyTradeResult {
   copied: number;
   failed: number;
+  paper: number;
+  simulatedVolumeUsd: number;
+  mode: TradingMode;
+  budgetCapUsd: number;
+  budgetUsedUsd: number;
   error?: string;
   lastTimestamp?: number;
   copiedKeys: string[];
@@ -100,10 +106,33 @@ export async function runCopyTrade(
   myAddress: string,
   targetAddress: string,
   signatureType: number,
-  config: { copyPercent: number; maxBetUsd: number; minBetUsd: number; stopLossBalance: number; floorToPolymarketMin: boolean },
+  config: {
+    copyPercent: number;
+    maxBetUsd: number;
+    minBetUsd: number;
+    stopLossBalance: number;
+    floorToPolymarketMin: boolean;
+    mode: TradingMode;
+    walletUsagePercent: number;
+  },
   state: { lastTimestamp: number; copiedKeys: string[] }
 ): Promise<CopyTradeResult> {
-  const result: CopyTradeResult = { copied: 0, failed: 0, copiedKeys: [], copiedTrades: [] };
+  const mode = config.mode;
+  const result: CopyTradeResult = {
+    copied: 0,
+    failed: 0,
+    paper: 0,
+    simulatedVolumeUsd: 0,
+    mode,
+    budgetCapUsd: 0,
+    budgetUsedUsd: 0,
+    copiedKeys: [],
+    copiedTrades: [],
+  };
+  if (mode === "off") {
+    result.error = "Trading mode is off";
+    return result;
+  }
 
   const signer = new Wallet(privateKey);
   const rawClient = new ClobClient(CLOB_HOST, CHAIN_ID, signer);
@@ -118,12 +147,20 @@ export async function runCopyTrade(
   );
 
   const cashBalance = await getCashBalance(myAddress);
-  if (cashBalance < 1) {
+  const walletUsagePercent = Math.max(1, Math.min(100, Number(config.walletUsagePercent) || 100));
+  const runBudgetCapUsd = (cashBalance * walletUsagePercent) / 100;
+  let remainingBudgetUsd = runBudgetCapUsd;
+  result.budgetCapUsd = runBudgetCapUsd;
+  if (mode === "live" && cashBalance < 1) {
     result.error = "Low balance";
     return result;
   }
-  if (config.stopLossBalance > 0 && cashBalance < config.stopLossBalance) {
+  if (mode === "live" && config.stopLossBalance > 0 && cashBalance < config.stopLossBalance) {
     result.error = `Stop-loss: balance $${cashBalance.toFixed(2)} below threshold $${config.stopLossBalance}`;
+    return result;
+  }
+  if (mode === "live" && runBudgetCapUsd < POLYMARKET_MIN_ORDER_USD) {
+    result.error = `Wallet usage cap too low: ${walletUsagePercent.toFixed(1)}% of $${cashBalance.toFixed(2)} is $${runBudgetCapUsd.toFixed(2)} (< $1 minimum)`;
     return result;
   }
 
@@ -154,7 +191,11 @@ export async function runCopyTrade(
 
     // Target's bet in USD: use usdcSize if available, else size * price
     const targetBetUsd = act.usdcSize ?? (act.size ?? 0) * price;
-    const rawAmount = Math.min((targetBetUsd * config.copyPercent) / 100, config.maxBetUsd);
+    const rawAmount = Math.min(
+      (targetBetUsd * config.copyPercent) / 100,
+      config.maxBetUsd,
+      Math.max(0, remainingBudgetUsd)
+    );
     let betUsd = rawAmount >= config.minBetUsd ? rawAmount : 0;
     if (betUsd === 0) {
       if (config.floorToPolymarketMin && rawAmount > 0 && rawAmount < POLYMARKET_MIN_ORDER_USD) {
@@ -169,8 +210,36 @@ export async function runCopyTrade(
         continue; // Polymarket rejects orders < $1
       }
     }
+    if (betUsd > remainingBudgetUsd) {
+      betUsd = remainingBudgetUsd;
+    }
+    if (mode === "live" && betUsd < POLYMARKET_MIN_ORDER_USD) {
+      continue;
+    }
 
     const side = sideStr === "BUY" ? Side.BUY : Side.SELL;
+
+    if (mode === "paper") {
+      copiedSet.add(key);
+      lastTimestamp = Math.max(lastTimestamp ?? 0, ts);
+      result.copied++;
+      result.paper++;
+      result.simulatedVolumeUsd += betUsd;
+      remainingBudgetUsd = Math.max(0, remainingBudgetUsd - betUsd);
+      result.copiedTrades.push({
+        title: act.title ?? "Unknown",
+        outcome: act.outcome ?? (sideStr === "BUY" ? "Yes" : "No"),
+        side: `PAPER ${sideStr}`,
+        amountUsd: betUsd,
+        price,
+        asset,
+        timestamp: Date.now(),
+      });
+      if (remainingBudgetUsd < POLYMARKET_MIN_ORDER_USD) {
+        break;
+      }
+      continue;
+    }
 
     try {
       // Omit price for BUY so client uses current order book price (improves FOK fill rate)
@@ -191,6 +260,7 @@ export async function runCopyTrade(
         copiedSet.add(key);
         lastTimestamp = Math.max(lastTimestamp ?? 0, ts);
         result.copied++;
+        remainingBudgetUsd = Math.max(0, remainingBudgetUsd - betUsd);
         result.copiedTrades.push({
           title: act.title ?? "Unknown",
           outcome: act.outcome ?? (sideStr === "BUY" ? "Yes" : "No"),
@@ -220,11 +290,16 @@ export async function runCopyTrade(
       result.error = next.length > 500 ? `${next.slice(0, 497)}...` : next;
       console.error("Copy trade error:", e);
     }
+
+    if (remainingBudgetUsd < POLYMARKET_MIN_ORDER_USD) {
+      break;
+    }
   }
 
   // Only advance lastTimestamp when we successfully copy—never skip trades we failed to copy
   result.lastTimestamp = lastTimestamp;
   result.copiedKeys = Array.from(copiedSet);
+  result.budgetUsedUsd = Math.max(0, result.budgetCapUsd - remainingBudgetUsd);
   return result;
 }
 

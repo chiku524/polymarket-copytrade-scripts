@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "worker": "tsx worker/persistent-worker.ts"
   },
   "dependencies": {
     "@polymarket/builder-relayer-client": "^0.0.8",
@@ -27,6 +28,7 @@
     "autoprefixer": "^10",
     "postcss": "^8",
     "tailwindcss": "^3.4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

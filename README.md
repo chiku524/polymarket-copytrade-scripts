@@ -1,10 +1,10 @@
-# Polymarket Copy Trading Scripts
+# Polymarket Paired Strategy Trader
 
-Copy trades from another Polymarket user (e.g. [gabagool22](https://polymarket.com/profile/gabagool22)) to your account, with each bet sized at **5–10% of your cash balance** based on the odds.
+Run your own BTC/ETH Up-Down paired strategy on Polymarket with **Off / Paper / Live** modes, wallet budget caps, and paper analytics before going live.
 
 ## Web UI (Vercel)
 
-A Next.js app provides a control UI to toggle copy trading, adjust percentage ranges, and run manually.
+A Next.js app provides a control UI to set trading mode (**Off / Paper / Live**), adjust sizing, cap wallet usage per run, and run manually.
 
 ### Deploy to Vercel
 
@@ -17,14 +17,14 @@ A Next.js app provides a control UI to toggle copy trading, adjust percentage ra
 3. **Environment variables** (Settings → Environment Variables):
    - `PRIVATE_KEY` – Your wallet private key
    - `MY_ADDRESS` – `0x370e81c93aa113274321339e69049187cce03bb9`
-   - `TARGET_ADDRESS` – `0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d`
+   - `TARGET_ADDRESS` – optional, used only for target analysis/debug tooling
    - `SIGNATURE_TYPE` – `1` (Email/Magic) or `2` (Browser wallet)
    - `CRON_SECRET` – Any random string (e.g. `openssl rand -hex 32`) to secure the cron job
 
-4. **Cron** runs every minute when enabled. Enable copy trading in the UI to start.
+4. **Cron** runs every minute when scheduled. Set mode to **Live** in the UI to place real orders, or **Paper** to simulate.
 
 5. **Claiming winnings** – Resolved positions must be “claimed” to move winnings to your cash balance. The app:
-   - Runs **claim automatically every 10 copy-trade runs** (configurable via `CLAIM_EVERY_N_RUNS`).
+   - Runs **claim automatically every 10 strategy runs** (configurable via `CLAIM_EVERY_N_RUNS`).
    - Or use the **Claim now** button in the UI (or `POST /api/claim-now`).
    - For **Polymarket proxy wallets** (default), set Builder API keys so the relayer can execute the claim from your proxy:
      - `POLY_BUILDER_API_KEY`, `POLY_BUILDER_SECRET`, `POLY_BUILDER_PASSPHRASE` (or `BUILDER_API_KEY`, `BUILDER_SECRET`, `BUILDER_PASSPHRASE`).
@@ -38,6 +38,35 @@ npm run dev
 ```
 
 Requires Vercel KV. Use `vercel link` and `vercel env pull` to pull env vars locally.
+
+### Persistent worker (recommended over cron)
+
+Instead of cron, you can run an always-on worker that continuously triggers `/api/copy-trade`.
+
+1. Set env vars for the worker process:
+   - `APP_BASE_URL` (e.g. `https://your-app-domain.com`)
+   - `CRON_SECRET` (must match your app env)
+   - optional: `WORKER_INTERVAL_MS` (default `15000`)
+   - optional: `WORKER_REQUEST_TIMEOUT_MS` (default `70000`)
+
+2. Start the worker:
+
+```bash
+npm run worker
+```
+
+3. Deploy pattern (production):
+   - Service A: web app (`next start`)
+   - Service B: worker (`npm run worker`)
+   - Both share the same Redis + wallet env vars.
+
+Control behavior from UI:
+- **Off** = pause (worker keeps running but places no new orders)
+- **Paper** = simulate only
+- **Live** = real orders
+- Paper analytics can be viewed in UI and via `GET /api/paper-stats` (reset with `DELETE /api/paper-stats`).
+
+To avoid duplicate triggers, run **either** cron **or** worker (not both).
 
 ---
 
@@ -114,3 +143,8 @@ Tune via `MIN_PERCENT` and `MAX_PERCENT` in `.env`.
 | `POLL_INTERVAL` | `15` | Seconds between checks |
 | `MIN_BET_USD` | `1.0` | Minimum bet size (USDC) |
 | `CRON_SECRET` | — | Required for Vercel cron (random string) |
+
+### UI Controls (Web App)
+
+- **Mode**: `Off` (paused), `Paper` (simulate only), `Live` (real orders)
+- **Wallet usage % / run**: caps how much balance can be spent each run in Paper/Live
