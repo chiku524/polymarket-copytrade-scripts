@@ -80,6 +80,7 @@ interface Config {
   mode: "off" | "paper" | "live";
   walletUsagePercent: number;
   pairChunkUsd: number;
+  maxRunBudgetUsd: number;
   pairMinEdgeCents: number;
   pairMinEdgeCents5m: number;
   pairMinEdgeCents15m: number;
@@ -107,6 +108,7 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   mode: "paper",
   walletUsagePercent: 100,
   pairChunkUsd: 1,
+  maxRunBudgetUsd: 0,
   pairLookbackSeconds: 300,
   pairMaxMarketsPerRun: 20,
   pairMinEdgeCents: 0.1,
@@ -127,6 +129,7 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   mode: "off",
   walletUsagePercent: 25,
   pairChunkUsd: 3,
+  maxRunBudgetUsd: 0,
   pairMinEdgeCents: 0.5,
   pairMinEdgeCents5m: 0.5,
   pairMinEdgeCents15m: 0.5,
@@ -530,6 +533,7 @@ export default function Home() {
         mode: "off" as const,
         walletUsagePercent: 25,
         pairChunkUsd: 3,
+        maxRunBudgetUsd: 0,
         pairMinEdgeCents: 0.5,
         pairMinEdgeCents5m: 0.5,
         pairMinEdgeCents15m: 0.5,
@@ -592,6 +596,7 @@ export default function Home() {
     mode: "off" as const,
     walletUsagePercent: 25,
     pairChunkUsd: 3,
+    maxRunBudgetUsd: 0,
     pairMinEdgeCents: 0.5,
     pairMinEdgeCents5m: 0.5,
     pairMinEdgeCents15m: 0.5,
@@ -741,6 +746,8 @@ export default function Home() {
         ? `auto-stop in ~${timerRemainingMinutes}m`
         : "timer expired (next cycle will switch off)"
       : "auto-stop off";
+  const runBudgetSummary =
+    cfg.maxRunBudgetUsd > 0 ? `$${cfg.maxRunBudgetUsd.toFixed(2)} fixed cap` : `${cfg.walletUsagePercent}% wallet cap`;
   const safetyLatch = status?.state.safetyLatch;
   const dailyRisk = status?.state.dailyRisk;
   const currentBalanceUsd = status?.cashBalance ?? 0;
@@ -1031,7 +1038,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {cfg.walletUsagePercent}% cap · {runTimerSummary}
+            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1182,6 +1189,26 @@ export default function Home() {
                 }
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Run budget cap ($)</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.maxRunBudgetUsd || ""}
+                placeholder="0 = wallet % only"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "maxRunBudgetUsd",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    1000000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
             </div>
             <div>
