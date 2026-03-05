@@ -196,6 +196,10 @@ export interface CopyTraderConfig {
   maxRunBudgetUsd: number;
   /** Minimum required edge in cents (1 - (pA + pB)) */
   pairMinEdgeCents: number;
+  /** Paper-only override toggle allowing negative-edge simulations */
+  paperAllowNegativeEdge: boolean;
+  /** Paper-only minimum edge in cents (can be negative when override enabled) */
+  paperMinEdgeCents: number;
   /** Min edge for 5m cadence signals */
   pairMinEdgeCents5m: number;
   /** Min edge for 15m cadence signals */
@@ -349,6 +353,8 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairChunkUsd: 3,
   maxRunBudgetUsd: 0,
   pairMinEdgeCents: 0.5,
+  paperAllowNegativeEdge: false,
+  paperMinEdgeCents: -0.2,
   pairMinEdgeCents5m: 0.5,
   pairMinEdgeCents15m: 0.5,
   pairMinEdgeCentsHourly: 0.5,
@@ -519,6 +525,12 @@ function sanitizeConfig(
       0,
       50
     ),
+    paperAllowNegativeEdge: raw.paperAllowNegativeEdge === true,
+    paperMinEdgeCents: clamp(
+      toFiniteNumber(raw.paperMinEdgeCents, current.paperMinEdgeCents),
+      -10,
+      50
+    ),
     pairMinEdgeCents5m: clamp(
       toFiniteNumber(raw.pairMinEdgeCents5m, current.pairMinEdgeCents5m),
       0,
@@ -615,6 +627,10 @@ export async function getConfig(): Promise<CopyTraderConfig> {
     maxRunBudgetUsd:
       c.maxRunBudgetUsd ?? c.runBudgetUsd ?? c.maxRunUsd ?? c.fixedRunBudgetUsd ?? 0,
     pairMinEdgeCents: c.pairMinEdgeCents ?? DEFAULT_CONFIG.pairMinEdgeCents,
+    paperAllowNegativeEdge:
+      c.paperAllowNegativeEdge ?? c.allowNegativeEdgeInPaper ?? c.paperAllowNegEdge ?? false,
+    paperMinEdgeCents:
+      c.paperMinEdgeCents ?? c.paperEdgeMinCents ?? c.minPaperEdgeCents ?? DEFAULT_CONFIG.paperMinEdgeCents,
     pairMinEdgeCents5m:
       c.pairMinEdgeCents5m ??
       c.pairMinEdge5m ??
