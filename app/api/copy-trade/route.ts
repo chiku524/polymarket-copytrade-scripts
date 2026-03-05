@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getConfig,
+  setConfig,
   getState,
   setState,
   appendActivity,
@@ -30,6 +31,19 @@ const LATCH_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
 export const maxDuration = 90;
 
+async function enforceAutoStopTimer() {
+  const config = await getConfig();
+  const autoStopAt = Number(config.autoStopAt ?? 0);
+  if (autoStopAt <= 0 || Date.now() < autoStopAt) {
+    return { config, expired: false as const };
+  }
+
+  // Timer elapsed: force strategy off before this run.
+  const updatedConfig = await setConfig({ mode: "off", enabled: false, autoStopAt: 0 });
+  const message = `Run timer expired at ${new Date(autoStopAt).toISOString()}; mode set to off`;
+  return { config: updatedConfig, expired: true as const, message };
+}
+
 async function runCopyTradeHandler() {
   const lockToken = await acquireRunLock(120);
   if (!lockToken) {
@@ -37,7 +51,17 @@ async function runCopyTradeHandler() {
   }
 
   try {
-    const config = await getConfig();
+    const timerCheck = await enforceAutoStopTimer();
+    const config = timerCheck.config;
+    if (timerCheck.expired) {
+      await setState({ lastRunAt: Date.now(), lastError: timerCheck.message });
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: "timer_expired",
+        error: timerCheck.message,
+      });
+    }
     const livePrivateKey = PRIVATE_KEY ?? "";
     if (config.mode === "off" || !config.enabled) {
       await setState({ lastRunAt: Date.now(), lastError: undefined });

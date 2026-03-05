@@ -100,6 +100,7 @@ interface Config {
   unwindShareBufferPct: number;
   maxDailyLiveNotionalUsd: number;
   maxDailyDrawdownUsd: number;
+  autoStopAt: number;
 }
 
 const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
@@ -119,6 +120,34 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   enableCadenceHourly: false,
   minBetUsd: 0.1,
   floorToPolymarketMin: true,
+};
+
+const LOW_LEVEL_DEFAULT_PRESET: Config = {
+  enabled: false,
+  mode: "off",
+  walletUsagePercent: 25,
+  pairChunkUsd: 3,
+  pairMinEdgeCents: 0.5,
+  pairMinEdgeCents5m: 0.5,
+  pairMinEdgeCents15m: 0.5,
+  pairMinEdgeCentsHourly: 0.5,
+  pairLookbackSeconds: 600,
+  pairMaxMarketsPerRun: 4,
+  enableBtc: true,
+  enableEth: true,
+  enableCadence5m: true,
+  enableCadence15m: true,
+  enableCadenceHourly: true,
+  maxBetUsd: 3,
+  minBetUsd: 0.1,
+  stopLossBalance: 0,
+  floorToPolymarketMin: true,
+  maxUnresolvedImbalancesPerRun: 1,
+  unwindSellSlippageCents: 3,
+  unwindShareBufferPct: 99,
+  maxDailyLiveNotionalUsd: 0,
+  maxDailyDrawdownUsd: 0,
+  autoStopAt: 0,
 };
 
 interface StrategyBreakdown {
@@ -365,6 +394,8 @@ export default function Home() {
           setRunResult("Skipped (daily live notional cap reached)");
         } else if (data.reason === "daily_drawdown_cap") {
           setRunResult("Skipped (daily drawdown cap reached)");
+        } else if (data.reason === "timer_expired") {
+          setRunResult("Skipped (run timer expired; mode switched to Off)");
         } else {
           setRunResult("Skipped");
         }
@@ -517,6 +548,7 @@ export default function Home() {
         unwindShareBufferPct: 99,
         maxDailyLiveNotionalUsd: 0,
         maxDailyDrawdownUsd: 0,
+        autoStopAt: 0,
       };
       const updates: Partial<Config> = { [field]: clamped };
       if (field === "pairMinEdgeCents") {
@@ -579,6 +611,7 @@ export default function Home() {
     unwindShareBufferPct: 99,
     maxDailyLiveNotionalUsd: 0,
     maxDailyDrawdownUsd: 0,
+    autoStopAt: 0,
   };
   const activity = status?.recentActivity ?? [];
   const paperStats = status?.paperStats ?? {
@@ -699,6 +732,14 @@ export default function Home() {
   } · drawdown cap ${
     cfg.maxDailyDrawdownUsd > 0 ? `$${cfg.maxDailyDrawdownUsd.toFixed(0)}` : "off"
   }`;
+  const timerRemainingMs = cfg.autoStopAt > 0 ? cfg.autoStopAt - Date.now() : 0;
+  const timerRemainingMinutes = Math.max(0, Math.ceil(timerRemainingMs / 60000));
+  const runTimerSummary =
+    cfg.autoStopAt > 0
+      ? timerRemainingMs > 0
+        ? `auto-stop in ~${timerRemainingMinutes}m`
+        : "timer expired (next cycle will switch off)"
+      : "auto-stop off";
   const safetyLatch = status?.state.safetyLatch;
   const dailyRisk = status?.state.dailyRisk;
   const currentBalanceUsd = status?.cashBalance ?? 0;
@@ -804,6 +845,26 @@ export default function Home() {
     setRunResult(
       "Applied Paper high-data preset (0.1c edge, max markets/run, 5m+15m focus)"
     );
+    setTimeout(() => setRunResult(null), 4500);
+  };
+
+  const setRunTimerPreset = async (hours: number) => {
+    const stopAt = Date.now() + hours * 60 * 60 * 1000;
+    await updateConfig({ autoStopAt: stopAt }, true);
+    setRunResult(`Auto-stop timer set for ${hours}h`);
+    setTimeout(() => setRunResult(null), 4500);
+  };
+
+  const clearRunTimer = async () => {
+    await updateConfig({ autoStopAt: 0 }, true);
+    setRunResult("Auto-stop timer cleared");
+    setTimeout(() => setRunResult(null), 4500);
+  };
+
+  const resetAllToDefaults = async () => {
+    if (!window.confirm("Reset all parameters to low-level defaults and switch mode to Off?")) return;
+    await updateConfig(LOW_LEVEL_DEFAULT_PRESET, true);
+    setRunResult("Reset all parameters to low-level defaults");
     setTimeout(() => setRunResult(null), 4500);
   };
 
@@ -942,11 +1003,45 @@ export default function Home() {
               >
                 Paper high-data preset
               </button>
+              <button
+                onClick={resetAllToDefaults}
+                disabled={saving}
+                className="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs disabled:opacity-40"
+              >
+                Reset defaults
+              </button>
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {cfg.walletUsagePercent}% cap
+            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {cfg.walletUsagePercent}% cap · {runTimerSummary}
           </p>
+          <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
+            <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {[1, 2, 4, 8, 12, 24].map((hours) => (
+                <button
+                  key={hours}
+                  onClick={() => setRunTimerPreset(hours)}
+                  disabled={saving}
+                  className="px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs disabled:opacity-40"
+                >
+                  {hours}h
+                </button>
+              ))}
+              <button
+                onClick={clearRunTimer}
+                disabled={saving || cfg.autoStopAt <= 0}
+                className="px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs disabled:opacity-30"
+              >
+                Clear
+              </button>
+            </div>
+            <p className="text-xs text-zinc-500 mt-2">
+              {cfg.autoStopAt > 0
+                ? `Auto-stop at ${new Date(cfg.autoStopAt).toLocaleString()}`
+                : "No timer active"}
+            </p>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             <div>
               <p className="text-xs text-zinc-500 mb-1">Min edge (¢)</p>
