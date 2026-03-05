@@ -111,6 +111,12 @@ function toEdge(value: unknown, fallbackCents = 0): number {
   return Math.max(0, Math.min(50, cents)) / 100;
 }
 
+function toSignedEdge(value: unknown, fallbackCents = 0): number {
+  const centsRaw = Number(value);
+  const cents = Number.isFinite(centsRaw) ? centsRaw : fallbackCents;
+  return Math.max(-50, Math.min(50, cents)) / 100;
+}
+
 function clipError(current: string | undefined, message: string): string {
   const next = current ? `${current}; ${message}` : message;
   return next.length > 500 ? `${next.slice(0, 497)}...` : next;
@@ -428,6 +434,8 @@ export async function runPairedStrategy(
     stopLossBalance: number;
     floorToPolymarketMin: boolean;
     pairMinEdgeCents: number;
+    paperAllowNegativeEdge: boolean;
+    paperMinEdgeCents: number;
     pairMinEdgeCents5m: number;
     pairMinEdgeCents15m: number;
     pairMinEdgeCentsHourly: number;
@@ -504,6 +512,10 @@ export async function runPairedStrategy(
     hourly: toEdge(config.pairMinEdgeCentsHourly, defaultMinEdge * 100),
     other: defaultMinEdge,
   };
+  const paperMinEdgeOverride =
+    mode === "paper" && config.paperAllowNegativeEdge
+      ? toSignedEdge(config.paperMinEdgeCents, -0.2)
+      : null;
   const lookbackSeconds = Math.max(20, Number(config.pairLookbackSeconds) || 120);
   const maxMarketsPerRun = Math.max(1, Math.min(20, Number(config.pairMaxMarketsPerRun) || 4));
   const pairChunkUsd = Math.max(1, Number(config.pairChunkUsd) || 3);
@@ -609,7 +621,9 @@ export async function runPairedStrategy(
       break;
     }
     const signalMinEdge = minEdgeByCadence[signal.cadence] ?? defaultMinEdge;
-    if (signal.edge < signalMinEdge) {
+    const effectiveMinEdge =
+      paperMinEdgeOverride != null ? Math.min(signalMinEdge, paperMinEdgeOverride) : signalMinEdge;
+    if (signal.edge < effectiveMinEdge) {
       reject(
         signal.cadence === "other"
           ? "edge_below_threshold"

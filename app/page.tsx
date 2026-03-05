@@ -82,6 +82,8 @@ interface Config {
   pairChunkUsd: number;
   maxRunBudgetUsd: number;
   pairMinEdgeCents: number;
+  paperAllowNegativeEdge: boolean;
+  paperMinEdgeCents: number;
   pairMinEdgeCents5m: number;
   pairMinEdgeCents15m: number;
   pairMinEdgeCentsHourly: number;
@@ -112,6 +114,8 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   pairLookbackSeconds: 300,
   pairMaxMarketsPerRun: 20,
   pairMinEdgeCents: 0.1,
+  paperAllowNegativeEdge: true,
+  paperMinEdgeCents: -0.2,
   pairMinEdgeCents5m: 0.1,
   pairMinEdgeCents15m: 0.1,
   pairMinEdgeCentsHourly: 0.2,
@@ -131,6 +135,8 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   pairChunkUsd: 3,
   maxRunBudgetUsd: 0,
   pairMinEdgeCents: 0.5,
+  paperAllowNegativeEdge: false,
+  paperMinEdgeCents: -0.2,
   pairMinEdgeCents5m: 0.5,
   pairMinEdgeCents15m: 0.5,
   pairMinEdgeCentsHourly: 0.5,
@@ -535,6 +541,8 @@ export default function Home() {
         pairChunkUsd: 3,
         maxRunBudgetUsd: 0,
         pairMinEdgeCents: 0.5,
+        paperAllowNegativeEdge: false,
+        paperMinEdgeCents: -0.2,
         pairMinEdgeCents5m: 0.5,
         pairMinEdgeCents15m: 0.5,
         pairMinEdgeCentsHourly: 0.5,
@@ -598,6 +606,8 @@ export default function Home() {
     pairChunkUsd: 3,
     maxRunBudgetUsd: 0,
     pairMinEdgeCents: 0.5,
+    paperAllowNegativeEdge: false,
+    paperMinEdgeCents: -0.2,
     pairMinEdgeCents5m: 0.5,
     pairMinEdgeCents15m: 0.5,
     pairMinEdgeCentsHourly: 0.5,
@@ -748,6 +758,10 @@ export default function Home() {
       : "auto-stop off";
   const runBudgetSummary =
     cfg.maxRunBudgetUsd > 0 ? `$${cfg.maxRunBudgetUsd.toFixed(2)} fixed cap` : `${cfg.walletUsagePercent}% wallet cap`;
+  const paperEdgeSummary =
+    cfg.mode === "paper" && cfg.paperAllowNegativeEdge
+      ? `paper edge override ${cfg.paperMinEdgeCents.toFixed(1)}¢`
+      : "paper edge override off";
   const safetyLatch = status?.state.safetyLatch;
   const dailyRisk = status?.state.dailyRisk;
   const currentBalanceUsd = status?.cashBalance ?? 0;
@@ -1038,7 +1052,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {runTimerSummary}
+            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1210,6 +1224,57 @@ export default function Home() {
                 disabled={saving}
                 className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
+            </div>
+            <div className="col-span-2 sm:col-span-3 lg:col-span-4 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase mb-2">Paper-only edge override</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  role="switch"
+                  aria-checked={cfg.paperAllowNegativeEdge}
+                  onClick={() =>
+                    updateConfig({ paperAllowNegativeEdge: !cfg.paperAllowNegativeEdge }, true)
+                  }
+                  disabled={saving}
+                  className={`
+                    relative w-11 h-6 rounded-full transition-colors flex-shrink-0
+                    ${cfg.paperAllowNegativeEdge ? "bg-sky-500" : "bg-zinc-700"}
+                    ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                  `}
+                >
+                  <span
+                    className={`
+                      absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform
+                      ${cfg.paperAllowNegativeEdge ? "left-6 translate-x-[-2px]" : "left-1"}
+                    `}
+                  />
+                </button>
+                <div>
+                  <p className="text-xs text-zinc-300">Allow slight negative edge in paper mode only</p>
+                  <p className="text-[11px] text-zinc-500">
+                    Live mode still enforces non-negative edge thresholds.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Paper min edge (¢)</p>
+                  <input
+                    type="number"
+                    min={-10}
+                    max={50}
+                    step={0.1}
+                    value={cfg.paperMinEdgeCents}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "paperMinEdgeCents",
+                        parseFloat(e.target.value) || 0,
+                        -10,
+                        50
+                      )
+                    }
+                    disabled={saving}
+                    className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+              </div>
             </div>
             <div>
               <p className="text-xs text-zinc-500 mb-1">Lookback (s)</p>

@@ -183,6 +183,8 @@ export async function POST() {
         stopLossBalance: config.stopLossBalance ?? 0,
         floorToPolymarketMin: config.floorToPolymarketMin !== false,
         pairMinEdgeCents: config.pairMinEdgeCents,
+        paperAllowNegativeEdge: config.paperAllowNegativeEdge,
+        paperMinEdgeCents: config.paperMinEdgeCents,
         pairMinEdgeCents5m: config.pairMinEdgeCents5m,
         pairMinEdgeCents15m: config.pairMinEdgeCents15m,
         pairMinEdgeCentsHourly: config.pairMinEdgeCentsHourly,
