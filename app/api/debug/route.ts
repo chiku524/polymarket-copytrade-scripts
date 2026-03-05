@@ -33,6 +33,9 @@ export async function GET(request: Request) {
 
     const walletUsagePercent = config?.walletUsagePercent ?? 0;
     const walletRunCapUsd = (cashBalance * walletUsagePercent) / 100;
+    const maxRunBudgetUsd = Math.max(0, Number(config?.maxRunBudgetUsd ?? 0));
+    const effectiveRunCapUsd =
+      maxRunBudgetUsd > 0 ? Math.min(walletRunCapUsd, maxRunBudgetUsd) : walletRunCapUsd;
     const lastRunAgeSec = state?.lastRunAt
       ? Math.floor((Date.now() - state.lastRunAt) / 1000)
       : null;
@@ -79,6 +82,8 @@ export async function GET(request: Request) {
         walletBudget: {
           walletUsagePercent,
           runCapUsd: walletRunCapUsd,
+          maxRunBudgetUsd,
+          effectiveRunCapUsd,
         },
         geoblock: {
           blocked: geoblock.blocked,

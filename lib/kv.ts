@@ -192,6 +192,8 @@ export interface CopyTraderConfig {
   maxBetUsd: number;
   /** Paired strategy chunk size per signal (USD) */
   pairChunkUsd: number;
+  /** Hard cap per run in USD (0 = disabled; uses wallet % cap only) */
+  maxRunBudgetUsd: number;
   /** Minimum required edge in cents (1 - (pA + pB)) */
   pairMinEdgeCents: number;
   /** Min edge for 5m cadence signals */
@@ -345,6 +347,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   walletUsagePercent: 25,
   maxBetUsd: 3,
   pairChunkUsd: 3,
+  maxRunBudgetUsd: 0,
   pairMinEdgeCents: 0.5,
   pairMinEdgeCents5m: 0.5,
   pairMinEdgeCents15m: 0.5,
@@ -506,6 +509,11 @@ function sanitizeConfig(
     ),
     maxBetUsd: clamp(toFiniteNumber(raw.maxBetUsd, current.maxBetUsd), 1, 10000),
     pairChunkUsd: clamp(toFiniteNumber(raw.pairChunkUsd, current.pairChunkUsd), 1, 10000),
+    maxRunBudgetUsd: clamp(
+      toFiniteNumber(raw.maxRunBudgetUsd, current.maxRunBudgetUsd),
+      0,
+      10000000
+    ),
     pairMinEdgeCents: clamp(
       toFiniteNumber(raw.pairMinEdgeCents, current.pairMinEdgeCents),
       0,
@@ -604,6 +612,8 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.walletUsagePercent ?? c.walletPercent ?? DEFAULT_CONFIG.walletUsagePercent,
     maxBetUsd: c.maxBetUsd ?? c.minBetUsd ?? DEFAULT_CONFIG.maxBetUsd,
     pairChunkUsd: c.pairChunkUsd ?? c.maxBetUsd ?? DEFAULT_CONFIG.pairChunkUsd,
+    maxRunBudgetUsd:
+      c.maxRunBudgetUsd ?? c.runBudgetUsd ?? c.maxRunUsd ?? c.fixedRunBudgetUsd ?? 0,
     pairMinEdgeCents: c.pairMinEdgeCents ?? DEFAULT_CONFIG.pairMinEdgeCents,
     pairMinEdgeCents5m:
       c.pairMinEdgeCents5m ??

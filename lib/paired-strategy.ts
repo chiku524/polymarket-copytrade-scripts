@@ -423,6 +423,7 @@ export async function runPairedStrategy(
     mode: TradingMode;
     walletUsagePercent: number;
     pairChunkUsd: number;
+    maxRunBudgetUsd: number;
     minBetUsd: number;
     stopLossBalance: number;
     floorToPolymarketMin: boolean;
@@ -472,7 +473,10 @@ export async function runPairedStrategy(
 
   const cashBalance = await getCashBalance(myAddress);
   const walletUsagePercent = Math.max(1, Math.min(100, Number(config.walletUsagePercent) || 100));
-  const runBudgetCapUsd = (cashBalance * walletUsagePercent) / 100;
+  const walletRunCapUsd = (cashBalance * walletUsagePercent) / 100;
+  const configuredRunBudgetUsd = Math.max(0, Number(config.maxRunBudgetUsd) || 0);
+  const runBudgetCapUsd =
+    configuredRunBudgetUsd > 0 ? Math.min(walletRunCapUsd, configuredRunBudgetUsd) : walletRunCapUsd;
   let remainingBudgetUsd = runBudgetCapUsd;
   result.budgetCapUsd = runBudgetCapUsd;
 
@@ -485,7 +489,11 @@ export async function runPairedStrategy(
     return result;
   }
   if (mode === "live" && runBudgetCapUsd < POLYMARKET_MIN_ORDER_USD * 2) {
-    result.error = `Wallet usage cap too low: ${walletUsagePercent.toFixed(1)}% of $${cashBalance.toFixed(2)} is $${runBudgetCapUsd.toFixed(2)} (< $2 for paired leg minimums)`;
+    const capReason =
+      configuredRunBudgetUsd > 0
+        ? `effective run cap $${runBudgetCapUsd.toFixed(2)} (wallet cap $${walletRunCapUsd.toFixed(2)}, fixed cap $${configuredRunBudgetUsd.toFixed(2)})`
+        : `${walletUsagePercent.toFixed(1)}% wallet cap of $${cashBalance.toFixed(2)} is $${runBudgetCapUsd.toFixed(2)}`;
+    result.error = `Run budget too low: ${capReason} (< $2 for paired leg minimums)`;
     return result;
   }
 
