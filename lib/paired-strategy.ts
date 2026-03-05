@@ -51,6 +51,7 @@ export interface SignalBreakdown {
 interface TradeConditionSnapshot {
   latestTimestamp: number;
   byOutcome: Map<string, OutcomeSnapshot>;
+  identityHint?: { coin: PairCoin; cadence: PairCadence };
 }
 
 interface ClobMarketToken {
@@ -257,6 +258,26 @@ async function getRecentPairSignals(params: {
     const asset = String(t.asset ?? "");
     if (!outcome || !asset) continue;
 
+    // Cheap pre-filter: most global trades are not BTC/ETH Up-Down.
+    // Use trade-level title/slug hints to avoid unnecessary market lookups.
+    const tradeTitle = String(t.title ?? "");
+    const tradeSlug = String(t.slug ?? "");
+    const hasIdentityHints = tradeTitle.length > 0 || tradeSlug.length > 0;
+    const hintedIdentity = detectUpDownIdentity(tradeTitle, tradeSlug);
+    if (hasIdentityHints && !hintedIdentity) {
+      continue;
+    }
+    if (hintedIdentity) {
+      if ((hintedIdentity.coin === "BTC" && !includeBtc) || (hintedIdentity.coin === "ETH" && !includeEth)) {
+        bumpReason(diagnostics, "coin_disabled");
+        continue;
+      }
+      if (!isCadenceEnabled(hintedIdentity.cadence, { cadence5m, cadence15m, cadenceHourly })) {
+        bumpReason(diagnostics, "cadence_disabled");
+        continue;
+      }
+    }
+
     const bucket = grouped.get(conditionId) ?? { latestTimestamp: 0, byOutcome: new Map<string, OutcomeSnapshot>() };
     const current = bucket.byOutcome.get(outcome);
     if (!current || ts > current.timestamp) {
@@ -268,6 +289,9 @@ async function getRecentPairSignals(params: {
       });
     }
     bucket.latestTimestamp = Math.max(bucket.latestTimestamp, ts);
+    if (hintedIdentity) {
+      bucket.identityHint = hintedIdentity;
+    }
     grouped.set(conditionId, bucket);
   }
 
@@ -319,7 +343,7 @@ async function getRecentPairSignals(params: {
     }
     const title = String(market.question ?? "");
     const slug = String(market.market_slug ?? "");
-    const identity = detectUpDownIdentity(title, slug);
+    const identity = groupedSnapshot.identityHint ?? detectUpDownIdentity(title, slug);
     if (!identity) {
       bumpReason(diagnostics, "market_not_btc_eth_updown");
       continue;
