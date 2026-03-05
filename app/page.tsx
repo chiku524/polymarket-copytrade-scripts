@@ -280,6 +280,7 @@ export default function Home() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showDiagnosticsTrend, setShowDiagnosticsTrend] = useState(false);
   const [mainTab, setMainTab] = useState<"betting" | "positions" | "analytics">("betting");
+  const [pairChunkInput, setPairChunkInput] = useState<string | null>(null);
   const configUpdatedAtRef = useRef<number>(0);
   const configRef = useRef<Config | null>(null);
 
@@ -867,6 +868,23 @@ export default function Home() {
     setRunResult("Reset all parameters to low-level defaults");
     setTimeout(() => setRunResult(null), 4500);
   };
+  const pairChunkDisplayValue = pairChunkInput ?? String(cfg.pairChunkUsd);
+  const handlePairChunkChange = (raw: string) => {
+    setPairChunkInput(raw);
+    if (raw.trim() === "") return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    handleNumericConfigChange("pairChunkUsd", parsed, 1, 10000);
+  };
+  const commitPairChunkInput = () => {
+    if (pairChunkInput === null) return;
+    const raw = pairChunkInput.trim();
+    setPairChunkInput(null);
+    if (raw === "") return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    handleNumericConfigChange("pairChunkUsd", parsed, 1, 10000);
+  };
 
   const lastRunAgo = status?.state.lastRunAt
     ? Math.floor((Date.now() - status.state.lastRunAt) / 1000)
@@ -1134,15 +1152,14 @@ export default function Home() {
                 min={1}
                 max={10000}
                 step="any"
-                value={cfg.pairChunkUsd}
-                onChange={(e) =>
-                  handleNumericConfigChange(
-                    "pairChunkUsd",
-                    parseFloat(e.target.value) || 3,
-                    1,
-                    10000
-                  )
-                }
+                value={pairChunkDisplayValue}
+                onChange={(e) => handlePairChunkChange(e.target.value)}
+                onBlur={commitPairChunkInput}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    (e.currentTarget as HTMLInputElement).blur();
+                  }
+                }}
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
