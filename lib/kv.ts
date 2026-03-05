@@ -12,7 +12,18 @@ const REDIS_URL =
   process.env.REDIS_PUBLIC_URL?.trim();
 let redis: Redis | null = null;
 let warnedMemoryFallback = false;
+let warnedRedisFailure = false;
+let redisBackoffUntil = 0;
 const memoryStore = new Map<string, { value: string; expiresAt?: number }>();
+
+function maybeUpgradeRedisUrl(url: string): string {
+  // Upstash URLs typically require TLS. If a plain redis:// URL is provided
+  // for an Upstash host, transparently upgrade it to rediss://.
+  if (url.startsWith("redis://") && url.includes(".upstash.io")) {
+    return `rediss://${url.slice("redis://".length)}`;
+  }
+  return url;
+}
 
 function serializeValue(value: unknown): string {
   try {
@@ -49,8 +60,15 @@ function getRedis(): Redis | null {
     }
     return null;
   }
+  if (Date.now() < redisBackoffUntil) {
+    return null;
+  }
+  if (redis && (redis.status === "end" || redis.status === "close")) {
+    redis = null;
+  }
   if (!redis) {
-    redis = new Redis(REDIS_URL, {
+    const effectiveRedisUrl = maybeUpgradeRedisUrl(REDIS_URL);
+    const client = new Redis(effectiveRedisUrl, {
       maxRetriesPerRequest: 5,
       enableAutoPipelining: true,
       lazyConnect: false,
@@ -60,16 +78,41 @@ function getRedis(): Redis | null {
         return Math.min(times * 200, 2000);
       },
     });
+    client.on("error", () => {
+      // Prevent ioredis "Unhandled error event" noise; command paths
+      // handle fallback and structured logging via handleRedisFailure.
+    });
+    redis = client;
   }
   return redis;
+}
+
+function handleRedisFailure(error: unknown): void {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (!warnedRedisFailure) {
+    console.error(`Redis unavailable; temporarily falling back to in-memory KV. Error: ${msg}`);
+    warnedRedisFailure = true;
+  }
+  redisBackoffUntil = Date.now() + 30_000;
+  try {
+    redis?.disconnect(false);
+  } catch {
+    // no-op
+  }
+  redis = null;
 }
 
 const kv = {
   async get<T>(key: string): Promise<T | null> {
     const client = getRedis();
     if (client) {
-      const raw = await client.get(key);
-      return parseValue<T>(raw);
+      try {
+        const raw = await client.get(key);
+        warnedRedisFailure = false;
+        return parseValue<T>(raw);
+      } catch (e) {
+        handleRedisFailure(e);
+      }
     }
     ensureMemoryFresh(key);
     return parseValue<T>(memoryStore.get(key)?.value ?? null);
@@ -81,16 +124,28 @@ const kv = {
 
     const client = getRedis();
     if (client) {
-      if (options?.nx && ttlSeconds) {
-        return client.set(key, payload, "EX", ttlSeconds, "NX");
+      try {
+        if (options?.nx && ttlSeconds) {
+          const result = await client.set(key, payload, "EX", ttlSeconds, "NX");
+          warnedRedisFailure = false;
+          return result;
+        }
+        if (options?.nx) {
+          const result = await client.set(key, payload, "NX");
+          warnedRedisFailure = false;
+          return result;
+        }
+        if (ttlSeconds) {
+          const result = await client.set(key, payload, "EX", ttlSeconds);
+          warnedRedisFailure = false;
+          return result;
+        }
+        const result = await client.set(key, payload);
+        warnedRedisFailure = false;
+        return result;
+      } catch (e) {
+        handleRedisFailure(e);
       }
-      if (options?.nx) {
-        return client.set(key, payload, "NX");
-      }
-      if (ttlSeconds) {
-        return client.set(key, payload, "EX", ttlSeconds);
-      }
-      return client.set(key, payload);
     }
 
     ensureMemoryFresh(key);
@@ -104,7 +159,13 @@ const kv = {
   async del(key: string): Promise<number> {
     const client = getRedis();
     if (client) {
-      return client.del(key);
+      try {
+        const result = await client.del(key);
+        warnedRedisFailure = false;
+        return result;
+      } catch (e) {
+        handleRedisFailure(e);
+      }
     }
     ensureMemoryFresh(key);
     return memoryStore.delete(key) ? 1 : 0;
