@@ -230,6 +230,8 @@ export interface CopyTraderConfig {
   maxDailyLiveNotionalUsd: number;
   /** Max drawdown from UTC-day starting balance (0 = disabled) */
   maxDailyDrawdownUsd: number;
+  /** Auto-stop timestamp in ms epoch (0 = disabled) */
+  autoStopAt: number;
 }
 
 export interface SafetyLatchState {
@@ -362,6 +364,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   unwindShareBufferPct: 99,
   maxDailyLiveNotionalUsd: 0,
   maxDailyDrawdownUsd: 0,
+  autoStopAt: 0,
 };
 
 const DEFAULT_PAPER_STATS: PaperStats = {
@@ -572,6 +575,11 @@ function sanitizeConfig(
       0,
       10000000
     ),
+    autoStopAt: clamp(
+      Math.floor(toFiniteNumber(raw.autoStopAt, current.autoStopAt)),
+      0,
+      4102444800000 // year 2100-01-01 UTC
+    ),
   };
 }
 
@@ -648,6 +656,7 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.dailyDrawdownCapUsd ??
       c.maxDailyLossUsd ??
       DEFAULT_CONFIG.maxDailyDrawdownUsd,
+    autoStopAt: c.autoStopAt ?? c.runUntilTs ?? c.runUntilAt ?? c.autoPauseAt ?? 0,
   };
 
   return sanitizeConfig(
