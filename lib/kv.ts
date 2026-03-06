@@ -288,6 +288,7 @@ export interface StrategyDiagnostics {
   failed: number;
   budgetCapUsd: number;
   budgetUsedUsd: number;
+  avgExecutedEdgeCents?: number;
   error?: string;
   timestamp: number;
   maxEdgeCentsSeen?: number;
@@ -330,6 +331,8 @@ export interface PaperRunStat {
   failed: number;
   budgetCapUsd: number;
   budgetUsedUsd: number;
+  executedEdgeCentsSum?: number;
+  avgExecutedEdgeCents?: number;
   error?: string;
 }
 
@@ -340,6 +343,8 @@ export interface PaperStats {
   totalFailed: number;
   totalBudgetCapUsd: number;
   totalBudgetUsedUsd: number;
+  totalExecutedEdgeCents: number;
+  avgExecutedEdgeCents: number;
   lastRunAt?: number;
   lastError?: string;
   recentRuns: PaperRunStat[];
@@ -383,6 +388,8 @@ const DEFAULT_PAPER_STATS: PaperStats = {
   totalFailed: 0,
   totalBudgetCapUsd: 0,
   totalBudgetUsedUsd: 0,
+  totalExecutedEdgeCents: 0,
+  avgExecutedEdgeCents: 0,
   recentRuns: [],
 };
 
@@ -489,6 +496,10 @@ function normalizeStrategyDiagnostics(value: unknown): StrategyDiagnostics {
     failed: Math.max(0, toFiniteNumber(raw.failed, 0)),
     budgetCapUsd: Math.max(0, toFiniteNumber(raw.budgetCapUsd, 0)),
     budgetUsedUsd: Math.max(0, toFiniteNumber(raw.budgetUsedUsd, 0)),
+    avgExecutedEdgeCents:
+      typeof raw.avgExecutedEdgeCents === "number"
+        ? toFiniteNumber(raw.avgExecutedEdgeCents, 0)
+        : undefined,
     error: typeof raw.error === "string" ? raw.error : undefined,
     timestamp: Math.max(0, toFiniteNumber(raw.timestamp, Date.now())),
     maxEdgeCentsSeen: typeof raw.maxEdgeCentsSeen === "number" ? raw.maxEdgeCentsSeen : undefined,
@@ -751,13 +762,19 @@ export async function appendActivity(trades: RecentActivity[]): Promise<void> {
 export async function getPaperStats(): Promise<PaperStats> {
   const s = await kv.get<PaperStats>(PAPER_STATS_KEY);
   if (!s) return { ...DEFAULT_PAPER_STATS };
+  const totalSimulatedTrades = toFiniteNumber(s.totalSimulatedTrades, 0);
+  const totalExecutedEdgeCents = toFiniteNumber(s.totalExecutedEdgeCents, 0);
+  const avgExecutedEdgeCents =
+    totalSimulatedTrades > 0 ? totalExecutedEdgeCents / totalSimulatedTrades : 0;
   return {
     totalRuns: toFiniteNumber(s.totalRuns, 0),
-    totalSimulatedTrades: toFiniteNumber(s.totalSimulatedTrades, 0),
+    totalSimulatedTrades,
     totalSimulatedVolumeUsd: toFiniteNumber(s.totalSimulatedVolumeUsd, 0),
     totalFailed: toFiniteNumber(s.totalFailed, 0),
     totalBudgetCapUsd: toFiniteNumber(s.totalBudgetCapUsd, 0),
     totalBudgetUsedUsd: toFiniteNumber(s.totalBudgetUsedUsd, 0),
+    totalExecutedEdgeCents,
+    avgExecutedEdgeCents,
     lastRunAt: s.lastRunAt,
     lastError: s.lastError,
     recentRuns: Array.isArray(s.recentRuns)
@@ -769,6 +786,11 @@ export async function getPaperStats(): Promise<PaperStats> {
             failed: toFiniteNumber(r.failed, 0),
             budgetCapUsd: toFiniteNumber(r.budgetCapUsd, 0),
             budgetUsedUsd: toFiniteNumber(r.budgetUsedUsd, 0),
+            executedEdgeCentsSum: toFiniteNumber(r.executedEdgeCentsSum, 0),
+            avgExecutedEdgeCents:
+              typeof r.avgExecutedEdgeCents === "number"
+                ? toFiniteNumber(r.avgExecutedEdgeCents, 0)
+                : undefined,
             error: typeof r.error === "string" ? r.error : undefined,
           }))
           .slice(0, 100)
@@ -778,22 +800,33 @@ export async function getPaperStats(): Promise<PaperStats> {
 
 export async function recordPaperRun(run: PaperRunStat): Promise<PaperStats> {
   const current = await getPaperStats();
+  const normalizedExecutedEdgeCentsSum = toFiniteNumber(run.executedEdgeCentsSum, 0);
+  const normalizedSimulatedTrades = toFiniteNumber(run.simulatedTrades, 0);
   const normalizedRun: PaperRunStat = {
     timestamp: toFiniteNumber(run.timestamp, Date.now()),
-    simulatedTrades: toFiniteNumber(run.simulatedTrades, 0),
+    simulatedTrades: normalizedSimulatedTrades,
     simulatedVolumeUsd: toFiniteNumber(run.simulatedVolumeUsd, 0),
     failed: toFiniteNumber(run.failed, 0),
     budgetCapUsd: toFiniteNumber(run.budgetCapUsd, 0),
     budgetUsedUsd: toFiniteNumber(run.budgetUsedUsd, 0),
+    executedEdgeCentsSum: normalizedExecutedEdgeCentsSum,
+    avgExecutedEdgeCents:
+      normalizedSimulatedTrades > 0
+        ? normalizedExecutedEdgeCentsSum / normalizedSimulatedTrades
+        : undefined,
     error: run.error,
   };
+  const totalExecutedEdgeCents = current.totalExecutedEdgeCents + normalizedExecutedEdgeCentsSum;
+  const totalSimulatedTrades = current.totalSimulatedTrades + normalizedRun.simulatedTrades;
   const updated: PaperStats = {
     totalRuns: current.totalRuns + 1,
-    totalSimulatedTrades: current.totalSimulatedTrades + normalizedRun.simulatedTrades,
+    totalSimulatedTrades,
     totalSimulatedVolumeUsd: current.totalSimulatedVolumeUsd + normalizedRun.simulatedVolumeUsd,
     totalFailed: current.totalFailed + normalizedRun.failed,
     totalBudgetCapUsd: current.totalBudgetCapUsd + normalizedRun.budgetCapUsd,
     totalBudgetUsedUsd: current.totalBudgetUsedUsd + normalizedRun.budgetUsedUsd,
+    totalExecutedEdgeCents,
+    avgExecutedEdgeCents: totalSimulatedTrades > 0 ? totalExecutedEdgeCents / totalSimulatedTrades : 0,
     lastRunAt: normalizedRun.timestamp,
     lastError: normalizedRun.error,
     recentRuns: [normalizedRun, ...current.recentRuns].slice(0, 100),

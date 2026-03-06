@@ -212,6 +212,7 @@ async function runCopyTradeHandler() {
       failed: result.failed,
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
+      avgExecutedEdgeCents: result.avgExecutedEdgeCents,
       error: result.error,
       timestamp: Date.now(),
       maxEdgeCentsSeen: result._maxEdgeCents,
@@ -299,6 +300,8 @@ async function runCopyTradeHandler() {
         failed: result.failed,
         budgetCapUsd: result.budgetCapUsd,
         budgetUsedUsd: result.budgetUsedUsd,
+        executedEdgeCentsSum: result.executedEdgeCentsSum,
+        avgExecutedEdgeCents: result.avgExecutedEdgeCents,
         error: result.error,
       });
     }
@@ -315,6 +318,7 @@ async function runCopyTradeHandler() {
       rejectedReasons: result.rejectedReasons,
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
+      avgExecutedEdgeCents: result.avgExecutedEdgeCents,
       error: result.error,
       claimed: claimResult?.claimed,
     });
