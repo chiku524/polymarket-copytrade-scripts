@@ -636,14 +636,9 @@ export async function runPairedStrategy(
       );
       continue;
     }
-    if (signal.latestTimestamp <= state.lastTimestamp) {
-      reject("signal_not_new");
-      continue;
-    }
-
     const signalKey = `${signal.conditionId}|${signal.latestTimestamp}`;
     if (copiedSet.has(signalKey)) {
-      reject("already_processed_signal");
+      reject("signal_not_new");
       continue;
     }
 
