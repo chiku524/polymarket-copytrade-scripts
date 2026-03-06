@@ -185,6 +185,7 @@ interface StrategyDiagnostics {
   failed: number;
   budgetCapUsd: number;
   budgetUsedUsd: number;
+  avgExecutedEdgeCents?: number;
   error?: string;
   timestamp: number;
   maxEdgeCentsSeen?: number;
@@ -230,6 +231,8 @@ interface Status {
     totalFailed: number;
     totalBudgetCapUsd: number;
     totalBudgetUsedUsd: number;
+    totalExecutedEdgeCents: number;
+    avgExecutedEdgeCents: number;
     lastRunAt?: number;
     lastError?: string;
     recentRuns: {
@@ -239,6 +242,8 @@ interface Status {
       failed: number;
       budgetCapUsd: number;
       budgetUsedUsd: number;
+      executedEdgeCentsSum?: number;
+      avgExecutedEdgeCents?: number;
       error?: string;
     }[];
   };
@@ -637,6 +642,8 @@ export default function Home() {
     totalFailed: 0,
     totalBudgetCapUsd: 0,
     totalBudgetUsedUsd: 0,
+    totalExecutedEdgeCents: 0,
+    avgExecutedEdgeCents: 0,
     recentRuns: [],
   };
   const avgTradesPerRun =
@@ -645,6 +652,7 @@ export default function Home() {
     paperStats.totalBudgetCapUsd > 0
       ? (paperStats.totalBudgetUsedUsd / paperStats.totalBudgetCapUsd) * 100
       : 0;
+  const avgExecutedEdgeCents = Number(paperStats.avgExecutedEdgeCents ?? 0);
   const lastDiag = status?.state.lastStrategyDiagnostics;
   const rejectedEntries = Object.entries(lastDiag?.rejectedReasons ?? {}).sort(
     (a, b) => b[1] - a[1]
@@ -666,6 +674,17 @@ export default function Home() {
   const trendAvgEligible =
     trendCount > 0 ? trendSample.reduce((sum, run) => sum + run.eligibleSignals, 0) / trendCount : 0;
   const trendAvgExecuted = trendCount > 0 ? trendExecutedTotal / trendCount : 0;
+  const trendExecutedEdgeCentsWeighted = trendSample.reduce((sum, run) => {
+    const executedPairs = run.mode === "paper" ? run.paper : run.copied;
+    if (executedPairs <= 0 || run.avgExecutedEdgeCents == null) return sum;
+    return sum + run.avgExecutedEdgeCents * executedPairs;
+  }, 0);
+  const trendExecutedPairs = trendSample.reduce(
+    (sum, run) => sum + (run.mode === "paper" ? run.paper : run.copied),
+    0
+  );
+  const trendAvgExecutedEdgeCents =
+    trendExecutedPairs > 0 ? trendExecutedEdgeCentsWeighted / trendExecutedPairs : 0;
   const trendErrorRuns = trendSample.filter((run) => Boolean(run.error) || run.failed > 0).length;
   const trendBudgetUsed = trendSample.reduce((sum, run) => sum + run.budgetUsedUsd, 0);
   const trendBudgetCap = trendSample.reduce((sum, run) => sum + run.budgetCapUsd, 0);
@@ -1582,7 +1601,7 @@ export default function Home() {
               {resettingPaperStats ? "Resetting…" : "Reset paper stats"}
             </button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
               <p className="text-[11px] text-zinc-500 uppercase">Runs</p>
               <p className="text-lg font-semibold text-zinc-200">{paperStats.totalRuns}</p>
@@ -1598,6 +1617,12 @@ export default function Home() {
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
               <p className="text-[11px] text-zinc-500 uppercase">Avg budget used</p>
               <p className="text-lg font-semibold text-zinc-200">{avgBudgetUsagePct.toFixed(1)}%</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Avg executed edge</p>
+              <p className="text-lg font-semibold text-zinc-200">
+                {paperStats.totalSimulatedTrades > 0 ? `${avgExecutedEdgeCents.toFixed(2)}¢` : "—"}
+              </p>
             </div>
           </div>
           <p className="text-xs text-zinc-500">
@@ -1640,6 +1665,9 @@ export default function Home() {
               </div>
               <p className="text-xs text-zinc-500 mb-3">
                 Mode: <span className="uppercase text-zinc-300">{lastDiag.mode}</span> · Rejections tracked: {rejectionTotal} ·
+                {lastDiag.avgExecutedEdgeCents != null && (lastDiag.mode === "paper" ? lastDiag.paper : lastDiag.copied) > 0 && (
+                  <> Avg executed edge: <span className="text-zinc-300">{lastDiag.avgExecutedEdgeCents.toFixed(2)}¢</span> ·</>
+                )}
                 {lastDiag.maxEdgeCentsSeen != null && (
                   <> Best edge seen: <span className={lastDiag.maxEdgeCentsSeen < 0 ? "text-amber-400" : "text-zinc-300"}>{lastDiag.maxEdgeCentsSeen.toFixed(2)}¢</span> ·</>
                 )}
@@ -1750,7 +1778,7 @@ export default function Home() {
           </div>
           {trendCount > 0 ? (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
                 <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
                   <p className="text-[11px] text-zinc-500 uppercase">Runs used</p>
                   <p className="text-lg font-semibold text-zinc-200">{trendCount}</p>
@@ -1770,6 +1798,12 @@ export default function Home() {
                 <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
                   <p className="text-[11px] text-zinc-500 uppercase">Avg budget used</p>
                   <p className="text-lg font-semibold text-zinc-200">{trendAvgBudgetUsagePct.toFixed(1)}%</p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Avg executed edge</p>
+                  <p className="text-lg font-semibold text-zinc-200">
+                    {trendExecutedPairs > 0 ? `${trendAvgExecutedEdgeCents.toFixed(2)}¢` : "—"}
+                  </p>
                 </div>
               </div>
 

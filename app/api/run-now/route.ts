@@ -215,6 +215,7 @@ export async function POST() {
       failed: result.failed,
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
+      avgExecutedEdgeCents: result.avgExecutedEdgeCents,
       error: result.error,
       timestamp: Date.now(),
       maxEdgeCentsSeen: result._maxEdgeCents,
@@ -289,6 +290,8 @@ export async function POST() {
         failed: result.failed,
         budgetCapUsd: result.budgetCapUsd,
         budgetUsedUsd: result.budgetUsedUsd,
+        executedEdgeCentsSum: result.executedEdgeCentsSum,
+        avgExecutedEdgeCents: result.avgExecutedEdgeCents,
         error: result.error,
       });
     }
@@ -305,6 +308,7 @@ export async function POST() {
       rejectedReasons: result.rejectedReasons,
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
+      avgExecutedEdgeCents: result.avgExecutedEdgeCents,
       error: result.error,
     });
   } catch (e) {

@@ -94,6 +94,10 @@ export interface PairedStrategyResult {
   unresolvedExposureAssets: string[];
   copiedKeys: string[];
   copiedTrades: CopiedTrade[];
+  /** Sum of edge cents across executed pair entries (for averaging) */
+  executedEdgeCentsSum: number;
+  /** Average edge cents across executed pair entries */
+  avgExecutedEdgeCents?: number;
   /** Best edge among evaluated signals (cents), for diagnostics */
   _maxEdgeCents?: number;
   /** Lowest pairSum among evaluated signals, for diagnostics */
@@ -470,6 +474,7 @@ export async function runPairedStrategy(
     unresolvedExposureAssets: [],
     copiedKeys: [],
     copiedTrades: [],
+    executedEdgeCentsSum: 0,
   };
   const reject = (reason: string) => {
     result.rejectedReasons[reason] = (result.rejectedReasons[reason] ?? 0) + 1;
@@ -685,6 +690,7 @@ export async function runPairedStrategy(
       copiedSet.add(signalKey);
       result.copied++;
       result.paper++;
+      result.executedEdgeCentsSum += signal.edge * 100;
       bumpBreakdown(result.executedBreakdown, signal);
       result.simulatedVolumeUsd += legAUsd + legBUsd;
       remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
@@ -720,6 +726,7 @@ export async function runPairedStrategy(
     const recordLivePair = () => {
       copiedSet.add(signalKey);
       result.copied++;
+      result.executedEdgeCentsSum += signal.edge * 100;
       bumpBreakdown(result.executedBreakdown, signal);
       remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
       lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
@@ -851,5 +858,9 @@ export async function runPairedStrategy(
   result.lastTimestamp = lastTimestamp;
   result.copiedKeys = Array.from(copiedSet).slice(-5000);
   result.budgetUsedUsd = Math.max(0, result.budgetCapUsd - remainingBudgetUsd);
+  const executedPairs = mode === "paper" ? result.paper : result.copied;
+  if (executedPairs > 0) {
+    result.avgExecutedEdgeCents = result.executedEdgeCentsSum / executedPairs;
+  }
   return result;
 }
