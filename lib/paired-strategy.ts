@@ -177,6 +177,12 @@ function estimateNetEdgeCents(params: {
   return params.edge * 100 - feePenaltyCents - slippagePenaltyCents;
 }
 
+function freshnessDecayWeight(latestTimestampSec: number, nowSec: number, halfLifeSec: number): number {
+  const effectiveHalfLife = Math.max(1, halfLifeSec);
+  const ageSec = Math.max(0, nowSec - latestTimestampSec);
+  return Math.exp((-Math.log(2) * ageSec) / effectiveHalfLife);
+}
+
 function detectUpDownIdentity(
   question: string,
   slug?: string
@@ -646,8 +652,54 @@ export async function runPairedStrategy(
 
   let lastTimestamp = state.lastTimestamp;
   let unresolvedImbalances = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const cadencePriorityWeight: Record<PairCadence, number> = {
+    "5m": 1.0,
+    "15m": 1.05,
+    hourly: 1.1,
+    other: 0.9,
+  };
+  const cadenceFreshnessHalfLifeSec: Record<PairCadence, number> = {
+    "5m": 150,
+    "15m": 420,
+    hourly: 1800,
+    other: 300,
+  };
+  const rankedSignals = signals
+    .map((signal) => {
+      const signalMinEdge = minEdgeByCadence[signal.cadence] ?? defaultMinEdge;
+      const effectiveMinEdge =
+        paperMinEdgeOverride != null
+          ? Math.min(signalMinEdge, paperMinEdgeOverride)
+          : signalMinEdge;
+      const signalMinEdgeCents = effectiveMinEdge * 100;
+      const netEdgeCents = estimateNetEdgeCents({
+        edge: signal.edge,
+        pairSum: signal.pairSum,
+        pairFeeBps,
+        pairSlippageCents,
+      });
+      const netSurplusCents = netEdgeCents - signalMinEdgeCents;
+      const freshness = freshnessDecayWeight(
+        signal.latestTimestamp,
+        nowSec,
+        cadenceFreshnessHalfLifeSec[signal.cadence] ?? 300
+      );
+      const cadenceWeight = cadencePriorityWeight[signal.cadence] ?? 1;
+      // Cadence-aware ranking: prioritize surplus net edge, then freshness.
+      const priorityScore = netSurplusCents * cadenceWeight + freshness * 0.25;
+      return { signal, netEdgeCents, signalMinEdgeCents, priorityScore };
+    })
+    .sort((a, b) => {
+      if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
+      if (b.netEdgeCents !== a.netEdgeCents) return b.netEdgeCents - a.netEdgeCents;
+      return b.signal.latestTimestamp - a.signal.latestTimestamp;
+    });
 
-  for (const signal of signals) {
+  for (const rankedSignal of rankedSignals) {
+    const signal = rankedSignal.signal;
+    const netEdgeCents = rankedSignal.netEdgeCents;
+    const signalMinEdgeCents = rankedSignal.signalMinEdgeCents;
     if (result.eligibleSignals >= maxMarketsPerRun) {
       reject("max_markets_per_run_reached");
       break;
@@ -656,21 +708,11 @@ export async function runPairedStrategy(
       reject("insufficient_remaining_budget");
       break;
     }
-    const signalMinEdge = minEdgeByCadence[signal.cadence] ?? defaultMinEdge;
-    const effectiveMinEdge =
-      paperMinEdgeOverride != null ? Math.min(signalMinEdge, paperMinEdgeOverride) : signalMinEdge;
-    const signalMinEdgeCents = effectiveMinEdge * 100;
-    const netEdgeCents = estimateNetEdgeCents({
-      edge: signal.edge,
-      pairSum: signal.pairSum,
-      pairFeeBps,
-      pairSlippageCents,
-    });
     if (netEdgeCents < signalMinEdgeCents) {
       const baseReason =
         signal.cadence === "other" ? "edge_below_threshold" : `edge_below_threshold_${signal.cadence}`;
       reject(
-        signal.edge >= effectiveMinEdge ? `${baseReason}_after_costs` : baseReason
+        signal.edge * 100 >= signalMinEdgeCents ? `${baseReason}_after_costs` : baseReason
       );
       continue;
     }
