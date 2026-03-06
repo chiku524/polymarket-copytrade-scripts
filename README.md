@@ -151,6 +151,7 @@ Docs: [Polymarket Developer Quickstart](https://docs.polymarket.com/quickstart/o
 - **Coins**: enable/disable `BTC` and `ETH` independently
 - **Cadence filters**: enable/disable `5m`, `15m`, and `Hourly` Up/Down markets
 - **Cadence min-edge thresholds**: tune different edge requirements for `5m`, `15m`, and `Hourly`
+- **Edge quality buffers**: configure estimated fee (`bps`) and slippage (`¢/leg`) so execution uses net edge, not just raw edge
 - **Diagnostics trend (last N runs)**: view rolling execution/rejection trends and Phase 2 coin/cadence mix
 - **Auto-tune suggestions**: one-click suggested cadence edge updates from trend diagnostics
 - **Live safety guardrails**: configurable `max unresolved imbalances/run`, `unwind slippage`, and `unwind share buffer` for one-leg recovery

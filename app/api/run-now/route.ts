@@ -188,6 +188,8 @@ export async function POST() {
         pairMinEdgeCents5m: config.pairMinEdgeCents5m,
         pairMinEdgeCents15m: config.pairMinEdgeCents15m,
         pairMinEdgeCentsHourly: config.pairMinEdgeCentsHourly,
+        pairFeeBps: config.pairFeeBps,
+        pairSlippageCents: config.pairSlippageCents,
         pairLookbackSeconds: config.pairLookbackSeconds,
         pairMaxMarketsPerRun: config.pairMaxMarketsPerRun,
         enableBtc: config.enableBtc,
@@ -216,9 +218,11 @@ export async function POST() {
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
       avgExecutedEdgeCents: result.avgExecutedEdgeCents,
+      avgExecutedNetEdgeCents: result.avgExecutedNetEdgeCents,
       error: result.error,
       timestamp: Date.now(),
       maxEdgeCentsSeen: result._maxEdgeCents,
+      maxNetEdgeCentsSeen: result._maxNetEdgeCents,
       minPairSumSeen: result._minPairSum,
     };
 
@@ -291,7 +295,9 @@ export async function POST() {
         budgetCapUsd: result.budgetCapUsd,
         budgetUsedUsd: result.budgetUsedUsd,
         executedEdgeCentsSum: result.executedEdgeCentsSum,
+        executedNetEdgeCentsSum: result.executedNetEdgeCentsSum,
         avgExecutedEdgeCents: result.avgExecutedEdgeCents,
+        avgExecutedNetEdgeCents: result.avgExecutedNetEdgeCents,
         error: result.error,
       });
     }
@@ -309,6 +315,7 @@ export async function POST() {
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
       avgExecutedEdgeCents: result.avgExecutedEdgeCents,
+      avgExecutedNetEdgeCents: result.avgExecutedNetEdgeCents,
       error: result.error,
     });
   } catch (e) {

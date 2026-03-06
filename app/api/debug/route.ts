@@ -68,6 +68,8 @@ export async function GET(request: Request) {
               eligibleSignals: diag.eligibleSignals ?? (diag.copied ?? 0) + (diag.paper ?? 0),
               rejectedReasons: diag.rejectedReasons ?? {},
               avgExecutedEdgeCents: diag.avgExecutedEdgeCents,
+              avgExecutedNetEdgeCents: diag.avgExecutedNetEdgeCents,
+              maxNetEdgeCentsSeen: diag.maxNetEdgeCentsSeen,
             }
           : null,
         cashBalance,
