@@ -244,6 +244,10 @@ export interface CopyTraderConfig {
   maxDailyDrawdownUsd: number;
   /** Auto-stop timestamp in ms epoch (0 = disabled) */
   autoStopAt: number;
+  /** Target executed pairs per hour for session pacing (0 = disabled) */
+  sessionTargetPairsPerHour: number;
+  /** Target minimum session average net edge in cents (0 = disabled) */
+  sessionMinAvgNetEdgeCents: number;
 }
 
 export interface SafetyLatchState {
@@ -394,6 +398,8 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   maxDailyLiveNotionalUsd: 0,
   maxDailyDrawdownUsd: 0,
   autoStopAt: 0,
+  sessionTargetPairsPerHour: 0,
+  sessionMinAvgNetEdgeCents: 0,
 };
 
 const DEFAULT_PAPER_STATS: PaperStats = {
@@ -645,6 +651,16 @@ function sanitizeConfig(
       0,
       4102444800000 // year 2100-01-01 UTC
     ),
+    sessionTargetPairsPerHour: clamp(
+      toFiniteNumber(raw.sessionTargetPairsPerHour, current.sessionTargetPairsPerHour),
+      0,
+      2000
+    ),
+    sessionMinAvgNetEdgeCents: clamp(
+      toFiniteNumber(raw.sessionMinAvgNetEdgeCents, current.sessionMinAvgNetEdgeCents),
+      -10,
+      50
+    ),
   };
 }
 
@@ -743,6 +759,16 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.maxDailyLossUsd ??
       DEFAULT_CONFIG.maxDailyDrawdownUsd,
     autoStopAt: c.autoStopAt ?? c.runUntilTs ?? c.runUntilAt ?? c.autoPauseAt ?? 0,
+    sessionTargetPairsPerHour:
+      c.sessionTargetPairsPerHour ??
+      c.sessionPairsPerHourTarget ??
+      c.targetPairsPerHour ??
+      0,
+    sessionMinAvgNetEdgeCents:
+      c.sessionMinAvgNetEdgeCents ??
+      c.sessionNetEdgeTargetCents ??
+      c.targetAvgNetEdgeCents ??
+      0,
   };
 
   return sanitizeConfig(

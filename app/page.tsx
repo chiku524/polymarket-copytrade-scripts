@@ -107,6 +107,8 @@ interface Config {
   maxDailyLiveNotionalUsd: number;
   maxDailyDrawdownUsd: number;
   autoStopAt: number;
+  sessionTargetPairsPerHour: number;
+  sessionMinAvgNetEdgeCents: number;
 }
 
 const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
@@ -166,6 +168,8 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   maxDailyLiveNotionalUsd: 0,
   maxDailyDrawdownUsd: 0,
   autoStopAt: 0,
+  sessionTargetPairsPerHour: 0,
+  sessionMinAvgNetEdgeCents: 0,
 };
 
 interface StrategyBreakdown {
@@ -585,6 +589,8 @@ export default function Home() {
         maxDailyLiveNotionalUsd: 0,
         maxDailyDrawdownUsd: 0,
         autoStopAt: 0,
+        sessionTargetPairsPerHour: 0,
+        sessionMinAvgNetEdgeCents: 0,
       };
       const updates: Partial<Config> = { [field]: clamped };
       if (field === "pairMinEdgeCents") {
@@ -654,6 +660,8 @@ export default function Home() {
     maxDailyLiveNotionalUsd: 0,
     maxDailyDrawdownUsd: 0,
     autoStopAt: 0,
+    sessionTargetPairsPerHour: 0,
+    sessionMinAvgNetEdgeCents: 0,
   };
   const activity = status?.recentActivity ?? [];
   const paperStats = status?.paperStats ?? {
@@ -686,6 +694,35 @@ export default function Home() {
     totalRuns: 0,
     recentRuns: [] as StrategyDiagnostics[],
   };
+  const sessionWindowMs = 60 * 60 * 1000;
+  const sessionSample = diagnosticsHistory.recentRuns.filter(
+    (run) => run.timestamp >= Date.now() - sessionWindowMs
+  );
+  const sessionExecutedPairs = sessionSample.reduce(
+    (sum, run) => sum + (run.mode === "paper" ? run.paper : run.copied),
+    0
+  );
+  const sessionNetEdgeWeighted = sessionSample.reduce((sum, run) => {
+    const executedPairs = run.mode === "paper" ? run.paper : run.copied;
+    const avgNetEdge = run.avgExecutedNetEdgeCents ?? run.avgExecutedEdgeCents;
+    if (executedPairs <= 0 || avgNetEdge == null) return sum;
+    return sum + avgNetEdge * executedPairs;
+  }, 0);
+  const sessionAvgNetEdgeCents =
+    sessionExecutedPairs > 0 ? sessionNetEdgeWeighted / sessionExecutedPairs : 0;
+  const sessionTargetPairsPerHour = Math.max(0, Number(cfg.sessionTargetPairsPerHour) || 0);
+  const sessionMinAvgNetEdgeCents = Number(cfg.sessionMinAvgNetEdgeCents) || 0;
+  const sessionPaceOnTrack =
+    sessionTargetPairsPerHour <= 0 || sessionExecutedPairs >= sessionTargetPairsPerHour;
+  const sessionQualityOnTrack =
+    sessionMinAvgNetEdgeCents <= 0 ||
+    (sessionExecutedPairs > 0 && sessionAvgNetEdgeCents >= sessionMinAvgNetEdgeCents);
+  const sessionKpiStatus =
+    sessionTargetPairsPerHour <= 0 && sessionMinAvgNetEdgeCents <= 0
+      ? "Targets off"
+      : sessionPaceOnTrack && sessionQualityOnTrack
+        ? "On track"
+        : "Needs adjustment";
   const trendWindow = Math.max(1, trendRuns);
   const trendSample = diagnosticsHistory.recentRuns.slice(0, trendWindow);
   const trendCount = trendSample.length;
@@ -813,6 +850,10 @@ export default function Home() {
     cfg.maxConditionExposureUsd > 0
       ? `$${cfg.maxConditionExposureUsd.toFixed(2)} / condition`
       : "condition cap off";
+  const sessionTargetSummary =
+    cfg.sessionTargetPairsPerHour > 0 || cfg.sessionMinAvgNetEdgeCents > 0
+      ? `session target ${cfg.sessionTargetPairsPerHour.toFixed(0)} pairs/h @ ${cfg.sessionMinAvgNetEdgeCents.toFixed(2)}¢+`
+      : "session targets off";
   const paperEdgeSummary =
     cfg.mode === "paper" && cfg.paperAllowNegativeEdge
       ? `paper edge override ${cfg.paperMinEdgeCents.toFixed(1)}¢`
@@ -1107,7 +1148,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {edgeQualitySummary} · {paperEdgeSummary} · {runTimerSummary}
+            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {edgeQualitySummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1334,6 +1375,47 @@ export default function Home() {
                     parseFloat(e.target.value) || 0,
                     0,
                     1000000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Target pairs/hour</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.sessionTargetPairsPerHour || ""}
+                placeholder="0 = off"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "sessionTargetPairsPerHour",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    2000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Target net edge (¢)</p>
+              <input
+                type="number"
+                min={-10}
+                max={50}
+                step={0.1}
+                value={cfg.sessionMinAvgNetEdgeCents || ""}
+                placeholder="0 = off"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "sessionMinAvgNetEdgeCents",
+                    parseFloat(e.target.value) || 0,
+                    -10,
+                    50
                   )
                 }
                 disabled={saving}
@@ -1734,6 +1816,55 @@ export default function Home() {
           {paperStats.lastError && (
             <p className="text-xs text-red-400 mt-1">{paperStats.lastError}</p>
           )}
+        </section>
+
+        {/* Session KPI targeting */}
+        <section className="mb-6 p-5 rounded-xl bg-zinc-900/40 border border-zinc-800/40">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">
+            Session KPI targeting (last 60m)
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Executed pairs</p>
+              <p className="text-lg font-semibold text-zinc-200">{sessionExecutedPairs}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Avg net edge</p>
+              <p className="text-lg font-semibold text-zinc-200">
+                {sessionExecutedPairs > 0 ? `${sessionAvgNetEdgeCents.toFixed(2)}¢` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Pace target</p>
+              <p className="text-lg font-semibold text-zinc-200">
+                {sessionTargetPairsPerHour > 0 ? `${sessionTargetPairsPerHour.toFixed(0)} / h` : "off"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Quality target</p>
+              <p className="text-lg font-semibold text-zinc-200">
+                {sessionMinAvgNetEdgeCents > 0 ? `${sessionMinAvgNetEdgeCents.toFixed(2)}¢+` : "off"}
+              </p>
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Status:{" "}
+            <span
+              className={
+                sessionKpiStatus === "On track"
+                  ? "text-emerald-300"
+                  : sessionKpiStatus === "Needs adjustment"
+                    ? "text-amber-300"
+                    : "text-zinc-300"
+              }
+            >
+              {sessionKpiStatus}
+            </span>
+            {" · "}
+            Pace {sessionPaceOnTrack ? "ok" : "below target"}
+            {" · "}
+            Quality {sessionQualityOnTrack ? "ok" : "below target"}
+          </p>
         </section>
 
         {/* Strategy diagnostics */}

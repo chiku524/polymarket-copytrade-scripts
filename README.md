@@ -156,6 +156,7 @@ Docs: [Polymarket Developer Quickstart](https://docs.polymarket.com/quickstart/o
 - **Cadence-aware ranking**: execution priority favors stronger net-edge surplus with cadence-specific freshness weighting
 - **Market freshness guards**: stale signals and large per-leg timestamp skews are rejected before execution
 - **Diagnostics trend (last N runs)**: view rolling execution/rejection trends and Phase 2 coin/cadence mix
+- **Session KPI targeting**: set optional pairs/hour and avg net-edge targets and track on-track status over last 60 minutes
 - **Auto-tune suggestions**: one-click suggested cadence edge updates from trend diagnostics
 - **Live safety guardrails**: configurable `max unresolved imbalances/run`, `unwind slippage`, and `unwind share buffer` for one-leg recovery
 - **Daily live risk caps**: configurable max daily notional and max daily drawdown hard-stops
