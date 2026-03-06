@@ -470,6 +470,7 @@ export async function runPairedStrategy(
     pairSlippageCents: number;
     pairLookbackSeconds: number;
     pairMaxMarketsPerRun: number;
+    maxConditionExposureUsd: number;
     enableBtc: boolean;
     enableEth: boolean;
     enableCadence5m: boolean;
@@ -549,6 +550,7 @@ export async function runPairedStrategy(
       : null;
   const lookbackSeconds = Math.max(20, Number(config.pairLookbackSeconds) || 120);
   const maxMarketsPerRun = Math.max(1, Math.min(20, Number(config.pairMaxMarketsPerRun) || 4));
+  const maxConditionExposureUsd = Math.max(0, Number(config.maxConditionExposureUsd) || 0);
   const pairChunkUsd = Math.max(1, Number(config.pairChunkUsd) || 3);
   const pairFeeBps = Math.max(0, Math.min(200, Number(config.pairFeeBps) || 0));
   const pairSlippageCents = Math.max(0, Math.min(25, Number(config.pairSlippageCents) || 0));
@@ -652,6 +654,13 @@ export async function runPairedStrategy(
 
   let lastTimestamp = state.lastTimestamp;
   let unresolvedImbalances = 0;
+  const conditionExposureUsd = new Map<string, number>();
+  const conditionExposureUsed = (conditionId: string): number =>
+    Math.max(0, conditionExposureUsd.get(conditionId) ?? 0);
+  const addConditionExposure = (conditionId: string, exposureUsd: number) => {
+    if (exposureUsd <= 0) return;
+    conditionExposureUsd.set(conditionId, conditionExposureUsed(conditionId) + exposureUsd);
+  };
   const nowSec = Math.floor(Date.now() / 1000);
   const cadencePriorityWeight: Record<PairCadence, number> = {
     "5m": 1.0,
@@ -735,6 +744,14 @@ export async function runPairedStrategy(
       reject(`outcome_timestamp_skew_${signal.cadence}`);
       continue;
     }
+    const conditionExposureRemaining =
+      maxConditionExposureUsd > 0
+        ? maxConditionExposureUsd - conditionExposureUsed(signal.conditionId)
+        : Infinity;
+    if (conditionExposureRemaining <= 0) {
+      reject("condition_exposure_cap_reached");
+      continue;
+    }
     if (netEdgeCents < signalMinEdgeCents) {
       const baseReason =
         signal.cadence === "other" ? "edge_below_threshold" : `edge_below_threshold_${signal.cadence}`;
@@ -755,7 +772,7 @@ export async function runPairedStrategy(
       continue;
     }
 
-    let pairSpend = Math.min(pairChunkUsd, remainingBudgetUsd);
+    let pairSpend = Math.min(pairChunkUsd, remainingBudgetUsd, conditionExposureRemaining);
     if (pairSpend <= 0) {
       reject("pair_spend_non_positive");
       continue;
@@ -778,6 +795,10 @@ export async function runPairedStrategy(
         legBUsd = Math.max(POLYMARKET_MIN_ORDER_USD, legBUsd);
       }
       pairSpend = legAUsd + legBUsd;
+      if (pairSpend > conditionExposureRemaining) {
+        reject("condition_exposure_cap_reached");
+        continue;
+      }
       if (pairSpend > remainingBudgetUsd) {
         reject("pair_exceeds_remaining_budget");
         continue;
@@ -795,6 +816,7 @@ export async function runPairedStrategy(
       result.executedNetEdgeCentsSum += netEdgeCents;
       bumpBreakdown(result.executedBreakdown, signal);
       result.simulatedVolumeUsd += legAUsd + legBUsd;
+      addConditionExposure(signal.conditionId, legAUsd + legBUsd);
       remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
       lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
       result.copiedTrades.push({
@@ -831,6 +853,7 @@ export async function runPairedStrategy(
       result.executedEdgeCentsSum += signal.edge * 100;
       result.executedNetEdgeCentsSum += netEdgeCents;
       bumpBreakdown(result.executedBreakdown, signal);
+      addConditionExposure(signal.conditionId, legAUsd + legBUsd);
       remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
       lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
       result.copiedTrades.push({

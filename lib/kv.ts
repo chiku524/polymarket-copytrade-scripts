@@ -214,6 +214,8 @@ export interface CopyTraderConfig {
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
   pairMaxMarketsPerRun: number;
+  /** Max exposure per condition within a run (0 = disabled) */
+  maxConditionExposureUsd: number;
   /** Include BTC Up/Down markets in strategy */
   enableBtc: boolean;
   /** Include ETH Up/Down markets in strategy */
@@ -377,6 +379,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairSlippageCents: 0.05,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
+  maxConditionExposureUsd: 0,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -593,6 +596,11 @@ function sanitizeConfig(
       1,
       20
     ),
+    maxConditionExposureUsd: clamp(
+      toFiniteNumber(raw.maxConditionExposureUsd, current.maxConditionExposureUsd),
+      0,
+      10000000
+    ),
     enableBtc: raw.enableBtc !== false,
     enableEth: raw.enableEth !== false,
     enableCadence5m: raw.enableCadence5m !== false,
@@ -697,6 +705,11 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:
       c.pairMaxMarketsPerRun ?? c.maxSignalsPerRun ?? DEFAULT_CONFIG.pairMaxMarketsPerRun,
+    maxConditionExposureUsd:
+      c.maxConditionExposureUsd ??
+      c.maxConditionNotionalUsd ??
+      c.maxPerConditionUsd ??
+      DEFAULT_CONFIG.maxConditionExposureUsd,
     enableBtc: c.enableBtc,
     enableEth: c.enableEth,
     enableCadence5m: c.enableCadence5m,

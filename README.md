@@ -148,6 +148,7 @@ Docs: [Polymarket Developer Quickstart](https://docs.polymarket.com/quickstart/o
 - **Mode**: `Off` (paused), `Paper` (simulate only), `Live` (real orders)
 - **Paper high-data preset**: one-click profile for dense paper sampling (`Paper` mode, 0.1c edge floor, max markets/run, focused on BTC/ETH 5m+15m)
 - **Wallet usage % / run**: caps how much balance can be spent each run in Paper/Live
+- **Condition exposure cap**: optional `$` cap per market condition per run to reduce concentration risk
 - **Coins**: enable/disable `BTC` and `ETH` independently
 - **Cadence filters**: enable/disable `5m`, `15m`, and `Hourly` Up/Down markets
 - **Cadence min-edge thresholds**: tune different edge requirements for `5m`, `15m`, and `Hourly`

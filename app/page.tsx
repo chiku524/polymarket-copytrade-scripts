@@ -91,6 +91,7 @@ interface Config {
   pairSlippageCents: number;
   pairLookbackSeconds: number;
   pairMaxMarketsPerRun: number;
+  maxConditionExposureUsd: number;
   enableBtc: boolean;
   enableEth: boolean;
   enableCadence5m: boolean;
@@ -115,6 +116,7 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   maxRunBudgetUsd: 0,
   pairLookbackSeconds: 300,
   pairMaxMarketsPerRun: 20,
+  maxConditionExposureUsd: 0,
   pairMinEdgeCents: 0.1,
   paperAllowNegativeEdge: true,
   paperMinEdgeCents: -0.2,
@@ -148,6 +150,7 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   pairSlippageCents: 0.05,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
+  maxConditionExposureUsd: 0,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -567,6 +570,7 @@ export default function Home() {
         pairSlippageCents: 0.05,
         pairLookbackSeconds: 120,
         pairMaxMarketsPerRun: 4,
+        maxConditionExposureUsd: 0,
         enableBtc: true,
         enableEth: true,
         enableCadence5m: true,
@@ -634,6 +638,7 @@ export default function Home() {
     pairSlippageCents: 0.05,
     pairLookbackSeconds: 120,
     pairMaxMarketsPerRun: 4,
+    maxConditionExposureUsd: 0,
     enableBtc: true,
     enableEth: true,
     enableCadence5m: true,
@@ -804,6 +809,10 @@ export default function Home() {
       : "auto-stop off";
   const runBudgetSummary =
     cfg.maxRunBudgetUsd > 0 ? `$${cfg.maxRunBudgetUsd.toFixed(2)} fixed cap` : `${cfg.walletUsagePercent}% wallet cap`;
+  const conditionExposureSummary =
+    cfg.maxConditionExposureUsd > 0
+      ? `$${cfg.maxConditionExposureUsd.toFixed(2)} / condition`
+      : "condition cap off";
   const paperEdgeSummary =
     cfg.mode === "paper" && cfg.paperAllowNegativeEdge
       ? `paper edge override ${cfg.paperMinEdgeCents.toFixed(1)}¢`
@@ -1098,7 +1107,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {edgeQualitySummary} · {paperEdgeSummary} · {runTimerSummary}
+            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {edgeQualitySummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1302,6 +1311,26 @@ export default function Home() {
                 onChange={(e) =>
                   handleNumericConfigChange(
                     "maxRunBudgetUsd",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    1000000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Condition cap ($)</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.maxConditionExposureUsd || ""}
+                placeholder="0 = disabled"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "maxConditionExposureUsd",
                     parseFloat(e.target.value) || 0,
                     0,
                     1000000
