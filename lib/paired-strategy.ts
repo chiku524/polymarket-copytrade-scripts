@@ -665,6 +665,18 @@ export async function runPairedStrategy(
     hourly: 1800,
     other: 300,
   };
+  const cadenceMaxSignalAgeSec: Record<PairCadence, number> = {
+    "5m": 180,
+    "15m": 540,
+    hourly: 2100,
+    other: 600,
+  };
+  const cadenceMaxOutcomeSkewSec: Record<PairCadence, number> = {
+    "5m": 75,
+    "15m": 180,
+    hourly: 600,
+    other: 120,
+  };
   const rankedSignals = signals
     .map((signal) => {
       const signalMinEdge = minEdgeByCadence[signal.cadence] ?? defaultMinEdge;
@@ -708,6 +720,21 @@ export async function runPairedStrategy(
       reject("insufficient_remaining_budget");
       break;
     }
+    const maxSignalAgeSec = Math.max(
+      30,
+      Math.min(lookbackSeconds, cadenceMaxSignalAgeSec[signal.cadence] ?? lookbackSeconds)
+    );
+    const signalAgeSec = Math.max(0, nowSec - signal.latestTimestamp);
+    if (signalAgeSec > maxSignalAgeSec) {
+      reject(`signal_stale_${signal.cadence}`);
+      continue;
+    }
+    const [outcomeA, outcomeB] = signal.outcomes;
+    const outcomeTimestampSkewSec = Math.abs(outcomeA.timestamp - outcomeB.timestamp);
+    if (outcomeTimestampSkewSec > (cadenceMaxOutcomeSkewSec[signal.cadence] ?? 120)) {
+      reject(`outcome_timestamp_skew_${signal.cadence}`);
+      continue;
+    }
     if (netEdgeCents < signalMinEdgeCents) {
       const baseReason =
         signal.cadence === "other" ? "edge_below_threshold" : `edge_below_threshold_${signal.cadence}`;
@@ -722,7 +749,6 @@ export async function runPairedStrategy(
       continue;
     }
 
-    const [outcomeA, outcomeB] = signal.outcomes;
     const pairSum = signal.pairSum;
     if (pairSum <= 0 || pairSum >= 2) {
       reject("invalid_pair_sum");
