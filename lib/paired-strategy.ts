@@ -1,6 +1,7 @@
 import { ClobClient, OrderType, Side } from "@polymarket/clob-client";
 import { Wallet } from "ethers";
 import { getCashBalance, type CopiedTrade } from "@/lib/copy-trade";
+import { getPositions } from "@/lib/polymarket";
 
 const DATA_API = "https://data-api.polymarket.com";
 const CLOB_HOST = "https://clob.polymarket.com";
@@ -9,6 +10,7 @@ const POLYMARKET_MIN_ORDER_USD = 1;
 const DEFAULT_MAX_UNRESOLVED_IMBALANCES_PER_RUN = 1;
 const DEFAULT_UNWIND_SELL_SLIPPAGE = 0.03;
 const DEFAULT_UNWIND_SHARE_BUFFER = 0.99;
+const MIN_LIVE_BUY_PRICE_BUFFER = 0.01;
 
 type TradingMode = "off" | "paper" | "live";
 type PairCoin = "BTC" | "ETH";
@@ -554,6 +556,10 @@ export async function runPairedStrategy(
   const pairChunkUsd = Math.max(1, Number(config.pairChunkUsd) || 3);
   const pairFeeBps = Math.max(0, Math.min(200, Number(config.pairFeeBps) || 0));
   const pairSlippageCents = Math.max(0, Math.min(25, Number(config.pairSlippageCents) || 0));
+  const liveBuyPriceBuffer = Math.max(
+    MIN_LIVE_BUY_PRICE_BUFFER,
+    Math.min(0.05, pairSlippageCents / 100 + 0.005)
+  );
   const minLegUsd = Math.max(0.1, Number(config.minBetUsd) || 0.1);
   const includeBtc = config.enableBtc !== false;
   const includeEth = config.enableEth !== false;
@@ -882,13 +888,17 @@ export async function runPairedStrategy(
       quotePrice: number
     ): Promise<{ ok: boolean; error: string }> => {
       try {
+        const buyPrice = Math.max(
+          0.001,
+          Math.min(0.999, quotePrice + liveBuyPriceBuffer)
+        );
         const resp = await client.createAndPostMarketOrder(
           {
             tokenID,
             amount: amountUsd,
             side: Side.BUY,
             orderType: OrderType.FOK,
-            price: Math.max(0.001, Math.min(0.999, quotePrice)),
+            price: buyPrice,
           },
           undefined,
           OrderType.FOK
@@ -946,12 +956,29 @@ export async function runPairedStrategy(
       continue;
     }
 
-    const estimatedLegAShares =
+    let unwindShareAmount =
       (legAUsd / Math.max(0.001, outcomeA.price)) * unwindShareBuffer;
+    try {
+      const positions = await getPositions(myAddress, 200);
+      const legAPosition = positions.find(
+        (p) => !p.redeemable && p.asset === outcomeA.asset && Number(p.size) > 0
+      );
+      if (legAPosition) {
+        // Use the current held shares for unwind sizing to avoid oversell rejections.
+        unwindShareAmount = Math.max(
+          0.001,
+          Number(legAPosition.size) * unwindShareBuffer
+        );
+      } else {
+        reject("live_partial_unwind_position_not_found");
+      }
+    } catch {
+      reject("live_partial_unwind_position_lookup_failed");
+    }
     const unwindMinPrice = Math.max(0.01, outcomeA.price - unwindSellSlippage);
     const unwind = await placeUnwindSell(
       outcomeA.asset,
-      Math.max(0.1, estimatedLegAShares),
+      Math.max(0.001, unwindShareAmount),
       unwindMinPrice
     );
     if (unwind.ok) {

@@ -122,44 +122,64 @@ async function runCopyTradeHandler() {
         });
         const now = Date.now();
         const shouldAlert = shouldSendLatchAlert(state.safetyLatch, now, LATCH_ALERT_COOLDOWN_MS);
-        const latchReason = latchAttempt.resolved
-          ? `${latchAttempt.message}. Manual reset required to resume live runs.`
-          : latchAttempt.message;
-        const updatedLatch = {
-          ...state.safetyLatch,
-          active: true,
-          reason: latchReason,
-          unresolvedAssets: latchAttempt.remainingAssets,
-          attempts: (state.safetyLatch.attempts ?? 0) + 1,
-          lastAttemptAt: now,
-          lastAlertAt: shouldAlert ? now : state.safetyLatch.lastAlertAt,
-        };
-        await setState({
-          lastRunAt: now,
-          lastError: latchReason,
-          safetyLatch: updatedLatch,
-          dailyRisk,
-        });
-        if (shouldAlert) {
-          await sendAlert({
-            title: "Safety latch active before worker live run",
-            severity: latchAttempt.resolved ? "warning" : "critical",
-            details: {
-              attemptedAssets: latchAttempt.attemptedAssets,
-              resolvedAssets: latchAttempt.resolvedAssets,
-              failedAssets: latchAttempt.failedAssets,
-              remainingAssets: latchAttempt.remainingAssets,
-              attempts: updatedLatch.attempts,
-              latchReason,
-            },
+        if (latchAttempt.resolved && latchAttempt.remainingAssets.length === 0) {
+          if (shouldAlert) {
+            await sendAlert({
+              title: "Safety latch auto-cleared",
+              severity: "info",
+              details: {
+                attemptedAssets: latchAttempt.attemptedAssets,
+                resolvedAssets: latchAttempt.resolvedAssets,
+                message: latchAttempt.message,
+              },
+            });
+          }
+          state = {
+            ...state,
+            safetyLatch: undefined,
+            lastError: undefined,
+            dailyRisk,
+          };
+        } else {
+          const latchReason = latchAttempt.resolved
+            ? `${latchAttempt.message}. Manual reset required to resume live runs.`
+            : latchAttempt.message;
+          const updatedLatch = {
+            ...state.safetyLatch,
+            active: true,
+            reason: latchReason,
+            unresolvedAssets: latchAttempt.remainingAssets,
+            attempts: (state.safetyLatch.attempts ?? 0) + 1,
+            lastAttemptAt: now,
+            lastAlertAt: shouldAlert ? now : state.safetyLatch.lastAlertAt,
+          };
+          await setState({
+            lastRunAt: now,
+            lastError: latchReason,
+            safetyLatch: updatedLatch,
+            dailyRisk,
+          });
+          if (shouldAlert) {
+            await sendAlert({
+              title: "Safety latch active before worker live run",
+              severity: latchAttempt.resolved ? "warning" : "critical",
+              details: {
+                attemptedAssets: latchAttempt.attemptedAssets,
+                resolvedAssets: latchAttempt.resolvedAssets,
+                failedAssets: latchAttempt.failedAssets,
+                remainingAssets: latchAttempt.remainingAssets,
+                attempts: updatedLatch.attempts,
+                latchReason,
+              },
+            });
+          }
+          return NextResponse.json({
+            ok: true,
+            skipped: true,
+            reason: "safety_latch_active",
+            error: latchReason,
           });
         }
-        return NextResponse.json({
-          ok: true,
-          skipped: true,
-          reason: "safety_latch_active",
-          error: latchReason,
-        });
       }
     }
 
