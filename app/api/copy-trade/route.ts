@@ -181,8 +181,11 @@ async function runCopyTradeHandler() {
         pairMinEdgeCents5m: config.pairMinEdgeCents5m,
         pairMinEdgeCents15m: config.pairMinEdgeCents15m,
         pairMinEdgeCentsHourly: config.pairMinEdgeCentsHourly,
+        pairFeeBps: config.pairFeeBps,
+        pairSlippageCents: config.pairSlippageCents,
         pairLookbackSeconds: config.pairLookbackSeconds,
         pairMaxMarketsPerRun: config.pairMaxMarketsPerRun,
+        maxConditionExposureUsd: config.maxConditionExposureUsd,
         enableBtc: config.enableBtc,
         enableEth: config.enableEth,
         enableCadence5m: config.enableCadence5m,
@@ -213,9 +216,11 @@ async function runCopyTradeHandler() {
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
       avgExecutedEdgeCents: result.avgExecutedEdgeCents,
+      avgExecutedNetEdgeCents: result.avgExecutedNetEdgeCents,
       error: result.error,
       timestamp: Date.now(),
       maxEdgeCentsSeen: result._maxEdgeCents,
+      maxNetEdgeCentsSeen: result._maxNetEdgeCents,
       minPairSumSeen: result._minPairSum,
     };
     const now = Date.now();
@@ -301,7 +306,9 @@ async function runCopyTradeHandler() {
         budgetCapUsd: result.budgetCapUsd,
         budgetUsedUsd: result.budgetUsedUsd,
         executedEdgeCentsSum: result.executedEdgeCentsSum,
+        executedNetEdgeCentsSum: result.executedNetEdgeCentsSum,
         avgExecutedEdgeCents: result.avgExecutedEdgeCents,
+        avgExecutedNetEdgeCents: result.avgExecutedNetEdgeCents,
         error: result.error,
       });
     }
@@ -319,6 +326,7 @@ async function runCopyTradeHandler() {
       budgetCapUsd: result.budgetCapUsd,
       budgetUsedUsd: result.budgetUsedUsd,
       avgExecutedEdgeCents: result.avgExecutedEdgeCents,
+      avgExecutedNetEdgeCents: result.avgExecutedNetEdgeCents,
       error: result.error,
       claimed: claimResult?.claimed,
     });

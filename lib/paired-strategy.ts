@@ -98,8 +98,14 @@ export interface PairedStrategyResult {
   executedEdgeCentsSum: number;
   /** Average edge cents across executed pair entries */
   avgExecutedEdgeCents?: number;
+  /** Sum of net edge cents after fee/slippage penalties */
+  executedNetEdgeCentsSum: number;
+  /** Average net edge cents after fee/slippage penalties */
+  avgExecutedNetEdgeCents?: number;
   /** Best edge among evaluated signals (cents), for diagnostics */
   _maxEdgeCents?: number;
+  /** Best net edge after penalties among evaluated signals (cents) */
+  _maxNetEdgeCents?: number;
   /** Lowest pairSum among evaluated signals, for diagnostics */
   _minPairSum?: number;
 }
@@ -158,6 +164,23 @@ function emptyBreakdown(): SignalBreakdown {
 function bumpBreakdown(target: SignalBreakdown, signal: Pick<PairSignal, "coin" | "cadence">) {
   target.byCoin[signal.coin] = (target.byCoin[signal.coin] ?? 0) + 1;
   target.byCadence[signal.cadence] = (target.byCadence[signal.cadence] ?? 0) + 1;
+}
+
+function estimateNetEdgeCents(params: {
+  edge: number;
+  pairSum: number;
+  pairFeeBps: number;
+  pairSlippageCents: number;
+}): number {
+  const feePenaltyCents = Math.max(0, params.pairSum) * (Math.max(0, params.pairFeeBps) / 10_000) * 100;
+  const slippagePenaltyCents = Math.max(0, params.pairSlippageCents) * 2;
+  return params.edge * 100 - feePenaltyCents - slippagePenaltyCents;
+}
+
+function freshnessDecayWeight(latestTimestampSec: number, nowSec: number, halfLifeSec: number): number {
+  const effectiveHalfLife = Math.max(1, halfLifeSec);
+  const ageSec = Math.max(0, nowSec - latestTimestampSec);
+  return Math.exp((-Math.log(2) * ageSec) / effectiveHalfLife);
 }
 
 function detectUpDownIdentity(
@@ -443,8 +466,11 @@ export async function runPairedStrategy(
     pairMinEdgeCents5m: number;
     pairMinEdgeCents15m: number;
     pairMinEdgeCentsHourly: number;
+    pairFeeBps: number;
+    pairSlippageCents: number;
     pairLookbackSeconds: number;
     pairMaxMarketsPerRun: number;
+    maxConditionExposureUsd: number;
     enableBtc: boolean;
     enableEth: boolean;
     enableCadence5m: boolean;
@@ -475,6 +501,7 @@ export async function runPairedStrategy(
     copiedKeys: [],
     copiedTrades: [],
     executedEdgeCentsSum: 0,
+    executedNetEdgeCentsSum: 0,
   };
   const reject = (reason: string) => {
     result.rejectedReasons[reason] = (result.rejectedReasons[reason] ?? 0) + 1;
@@ -523,7 +550,10 @@ export async function runPairedStrategy(
       : null;
   const lookbackSeconds = Math.max(20, Number(config.pairLookbackSeconds) || 120);
   const maxMarketsPerRun = Math.max(1, Math.min(20, Number(config.pairMaxMarketsPerRun) || 4));
+  const maxConditionExposureUsd = Math.max(0, Number(config.maxConditionExposureUsd) || 0);
   const pairChunkUsd = Math.max(1, Number(config.pairChunkUsd) || 3);
+  const pairFeeBps = Math.max(0, Math.min(200, Number(config.pairFeeBps) || 0));
+  const pairSlippageCents = Math.max(0, Math.min(25, Number(config.pairSlippageCents) || 0));
   const minLegUsd = Math.max(0.1, Number(config.minBetUsd) || 0.1);
   const includeBtc = config.enableBtc !== false;
   const includeEth = config.enableEth !== false;
@@ -582,11 +612,19 @@ export async function runPairedStrategy(
   const signals = signalBuild.signals;
   result.evaluatedSignals = signals.length;
   let maxEdgeCentsSeen = -Infinity;
+  let maxNetEdgeCentsSeen = -Infinity;
   let minPairSumSeen = Infinity;
   for (const signal of signals) {
     bumpBreakdown(result.evaluatedBreakdown, signal);
     const edgeCents = signal.edge * 100;
+    const netEdgeCents = estimateNetEdgeCents({
+      edge: signal.edge,
+      pairSum: signal.pairSum,
+      pairFeeBps,
+      pairSlippageCents,
+    });
     if (edgeCents > maxEdgeCentsSeen) maxEdgeCentsSeen = edgeCents;
+    if (netEdgeCents > maxNetEdgeCentsSeen) maxNetEdgeCentsSeen = netEdgeCents;
     if (signal.pairSum < minPairSumSeen) minPairSumSeen = signal.pairSum;
   }
   if (result.evaluatedSignals === 0) {
@@ -594,6 +632,7 @@ export async function runPairedStrategy(
   }
   if (signals.length > 0) {
     result._maxEdgeCents = maxEdgeCentsSeen;
+    result._maxNetEdgeCents = maxNetEdgeCentsSeen;
     result._minPairSum = minPairSumSeen;
   }
 
@@ -615,8 +654,73 @@ export async function runPairedStrategy(
 
   let lastTimestamp = state.lastTimestamp;
   let unresolvedImbalances = 0;
+  const conditionExposureUsd = new Map<string, number>();
+  const conditionExposureUsed = (conditionId: string): number =>
+    Math.max(0, conditionExposureUsd.get(conditionId) ?? 0);
+  const addConditionExposure = (conditionId: string, exposureUsd: number) => {
+    if (exposureUsd <= 0) return;
+    conditionExposureUsd.set(conditionId, conditionExposureUsed(conditionId) + exposureUsd);
+  };
+  const nowSec = Math.floor(Date.now() / 1000);
+  const cadencePriorityWeight: Record<PairCadence, number> = {
+    "5m": 1.0,
+    "15m": 1.05,
+    hourly: 1.1,
+    other: 0.9,
+  };
+  const cadenceFreshnessHalfLifeSec: Record<PairCadence, number> = {
+    "5m": 150,
+    "15m": 420,
+    hourly: 1800,
+    other: 300,
+  };
+  const cadenceMaxSignalAgeSec: Record<PairCadence, number> = {
+    "5m": 180,
+    "15m": 540,
+    hourly: 2100,
+    other: 600,
+  };
+  const cadenceMaxOutcomeSkewSec: Record<PairCadence, number> = {
+    "5m": 75,
+    "15m": 180,
+    hourly: 600,
+    other: 120,
+  };
+  const rankedSignals = signals
+    .map((signal) => {
+      const signalMinEdge = minEdgeByCadence[signal.cadence] ?? defaultMinEdge;
+      const effectiveMinEdge =
+        paperMinEdgeOverride != null
+          ? Math.min(signalMinEdge, paperMinEdgeOverride)
+          : signalMinEdge;
+      const signalMinEdgeCents = effectiveMinEdge * 100;
+      const netEdgeCents = estimateNetEdgeCents({
+        edge: signal.edge,
+        pairSum: signal.pairSum,
+        pairFeeBps,
+        pairSlippageCents,
+      });
+      const netSurplusCents = netEdgeCents - signalMinEdgeCents;
+      const freshness = freshnessDecayWeight(
+        signal.latestTimestamp,
+        nowSec,
+        cadenceFreshnessHalfLifeSec[signal.cadence] ?? 300
+      );
+      const cadenceWeight = cadencePriorityWeight[signal.cadence] ?? 1;
+      // Cadence-aware ranking: prioritize surplus net edge, then freshness.
+      const priorityScore = netSurplusCents * cadenceWeight + freshness * 0.25;
+      return { signal, netEdgeCents, signalMinEdgeCents, priorityScore };
+    })
+    .sort((a, b) => {
+      if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
+      if (b.netEdgeCents !== a.netEdgeCents) return b.netEdgeCents - a.netEdgeCents;
+      return b.signal.latestTimestamp - a.signal.latestTimestamp;
+    });
 
-  for (const signal of signals) {
+  for (const rankedSignal of rankedSignals) {
+    const signal = rankedSignal.signal;
+    const netEdgeCents = rankedSignal.netEdgeCents;
+    const signalMinEdgeCents = rankedSignal.signalMinEdgeCents;
     if (result.eligibleSignals >= maxMarketsPerRun) {
       reject("max_markets_per_run_reached");
       break;
@@ -625,14 +729,34 @@ export async function runPairedStrategy(
       reject("insufficient_remaining_budget");
       break;
     }
-    const signalMinEdge = minEdgeByCadence[signal.cadence] ?? defaultMinEdge;
-    const effectiveMinEdge =
-      paperMinEdgeOverride != null ? Math.min(signalMinEdge, paperMinEdgeOverride) : signalMinEdge;
-    if (signal.edge < effectiveMinEdge) {
+    const maxSignalAgeSec = Math.max(
+      30,
+      Math.min(lookbackSeconds, cadenceMaxSignalAgeSec[signal.cadence] ?? lookbackSeconds)
+    );
+    const signalAgeSec = Math.max(0, nowSec - signal.latestTimestamp);
+    if (signalAgeSec > maxSignalAgeSec) {
+      reject(`signal_stale_${signal.cadence}`);
+      continue;
+    }
+    const [outcomeA, outcomeB] = signal.outcomes;
+    const outcomeTimestampSkewSec = Math.abs(outcomeA.timestamp - outcomeB.timestamp);
+    if (outcomeTimestampSkewSec > (cadenceMaxOutcomeSkewSec[signal.cadence] ?? 120)) {
+      reject(`outcome_timestamp_skew_${signal.cadence}`);
+      continue;
+    }
+    const conditionExposureRemaining =
+      maxConditionExposureUsd > 0
+        ? maxConditionExposureUsd - conditionExposureUsed(signal.conditionId)
+        : Infinity;
+    if (conditionExposureRemaining <= 0) {
+      reject("condition_exposure_cap_reached");
+      continue;
+    }
+    if (netEdgeCents < signalMinEdgeCents) {
+      const baseReason =
+        signal.cadence === "other" ? "edge_below_threshold" : `edge_below_threshold_${signal.cadence}`;
       reject(
-        signal.cadence === "other"
-          ? "edge_below_threshold"
-          : `edge_below_threshold_${signal.cadence}`
+        signal.edge * 100 >= signalMinEdgeCents ? `${baseReason}_after_costs` : baseReason
       );
       continue;
     }
@@ -642,14 +766,13 @@ export async function runPairedStrategy(
       continue;
     }
 
-    const [outcomeA, outcomeB] = signal.outcomes;
     const pairSum = signal.pairSum;
     if (pairSum <= 0 || pairSum >= 2) {
       reject("invalid_pair_sum");
       continue;
     }
 
-    let pairSpend = Math.min(pairChunkUsd, remainingBudgetUsd);
+    let pairSpend = Math.min(pairChunkUsd, remainingBudgetUsd, conditionExposureRemaining);
     if (pairSpend <= 0) {
       reject("pair_spend_non_positive");
       continue;
@@ -672,6 +795,10 @@ export async function runPairedStrategy(
         legBUsd = Math.max(POLYMARKET_MIN_ORDER_USD, legBUsd);
       }
       pairSpend = legAUsd + legBUsd;
+      if (pairSpend > conditionExposureRemaining) {
+        reject("condition_exposure_cap_reached");
+        continue;
+      }
       if (pairSpend > remainingBudgetUsd) {
         reject("pair_exceeds_remaining_budget");
         continue;
@@ -686,8 +813,10 @@ export async function runPairedStrategy(
       result.copied++;
       result.paper++;
       result.executedEdgeCentsSum += signal.edge * 100;
+      result.executedNetEdgeCentsSum += netEdgeCents;
       bumpBreakdown(result.executedBreakdown, signal);
       result.simulatedVolumeUsd += legAUsd + legBUsd;
+      addConditionExposure(signal.conditionId, legAUsd + legBUsd);
       remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
       lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
       result.copiedTrades.push({
@@ -722,7 +851,9 @@ export async function runPairedStrategy(
       copiedSet.add(signalKey);
       result.copied++;
       result.executedEdgeCentsSum += signal.edge * 100;
+      result.executedNetEdgeCentsSum += netEdgeCents;
       bumpBreakdown(result.executedBreakdown, signal);
+      addConditionExposure(signal.conditionId, legAUsd + legBUsd);
       remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
       lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
       result.copiedTrades.push({
@@ -856,6 +987,7 @@ export async function runPairedStrategy(
   const executedPairs = mode === "paper" ? result.paper : result.copied;
   if (executedPairs > 0) {
     result.avgExecutedEdgeCents = result.executedEdgeCentsSum / executedPairs;
+    result.avgExecutedNetEdgeCents = result.executedNetEdgeCentsSum / executedPairs;
   }
   return result;
 }

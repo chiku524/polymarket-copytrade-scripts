@@ -87,8 +87,11 @@ interface Config {
   pairMinEdgeCents5m: number;
   pairMinEdgeCents15m: number;
   pairMinEdgeCentsHourly: number;
+  pairFeeBps: number;
+  pairSlippageCents: number;
   pairLookbackSeconds: number;
   pairMaxMarketsPerRun: number;
+  maxConditionExposureUsd: number;
   enableBtc: boolean;
   enableEth: boolean;
   enableCadence5m: boolean;
@@ -104,6 +107,8 @@ interface Config {
   maxDailyLiveNotionalUsd: number;
   maxDailyDrawdownUsd: number;
   autoStopAt: number;
+  sessionTargetPairsPerHour: number;
+  sessionMinAvgNetEdgeCents: number;
 }
 
 const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
@@ -113,12 +118,15 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   maxRunBudgetUsd: 0,
   pairLookbackSeconds: 300,
   pairMaxMarketsPerRun: 20,
+  maxConditionExposureUsd: 0,
   pairMinEdgeCents: 0.1,
   paperAllowNegativeEdge: true,
   paperMinEdgeCents: -0.2,
   pairMinEdgeCents5m: 0.1,
   pairMinEdgeCents15m: 0.1,
   pairMinEdgeCentsHourly: 0.2,
+  pairFeeBps: 2,
+  pairSlippageCents: 0.05,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -140,8 +148,11 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   pairMinEdgeCents5m: 0.5,
   pairMinEdgeCents15m: 0.5,
   pairMinEdgeCentsHourly: 0.5,
+  pairFeeBps: 2,
+  pairSlippageCents: 0.05,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
+  maxConditionExposureUsd: 0,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -157,6 +168,8 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   maxDailyLiveNotionalUsd: 0,
   maxDailyDrawdownUsd: 0,
   autoStopAt: 0,
+  sessionTargetPairsPerHour: 0,
+  sessionMinAvgNetEdgeCents: 0,
 };
 
 interface StrategyBreakdown {
@@ -186,9 +199,11 @@ interface StrategyDiagnostics {
   budgetCapUsd: number;
   budgetUsedUsd: number;
   avgExecutedEdgeCents?: number;
+  avgExecutedNetEdgeCents?: number;
   error?: string;
   timestamp: number;
   maxEdgeCentsSeen?: number;
+  maxNetEdgeCentsSeen?: number;
   minPairSumSeen?: number;
 }
 
@@ -232,7 +247,9 @@ interface Status {
     totalBudgetCapUsd: number;
     totalBudgetUsedUsd: number;
     totalExecutedEdgeCents: number;
+    totalExecutedNetEdgeCents: number;
     avgExecutedEdgeCents: number;
+    avgExecutedNetEdgeCents: number;
     lastRunAt?: number;
     lastError?: string;
     recentRuns: {
@@ -243,7 +260,9 @@ interface Status {
       budgetCapUsd: number;
       budgetUsedUsd: number;
       executedEdgeCentsSum?: number;
+      executedNetEdgeCentsSum?: number;
       avgExecutedEdgeCents?: number;
+      avgExecutedNetEdgeCents?: number;
       error?: string;
     }[];
   };
@@ -551,8 +570,11 @@ export default function Home() {
         pairMinEdgeCents5m: 0.5,
         pairMinEdgeCents15m: 0.5,
         pairMinEdgeCentsHourly: 0.5,
+        pairFeeBps: 2,
+        pairSlippageCents: 0.05,
         pairLookbackSeconds: 120,
         pairMaxMarketsPerRun: 4,
+        maxConditionExposureUsd: 0,
         enableBtc: true,
         enableEth: true,
         enableCadence5m: true,
@@ -567,6 +589,8 @@ export default function Home() {
         maxDailyLiveNotionalUsd: 0,
         maxDailyDrawdownUsd: 0,
         autoStopAt: 0,
+        sessionTargetPairsPerHour: 0,
+        sessionMinAvgNetEdgeCents: 0,
       };
       const updates: Partial<Config> = { [field]: clamped };
       if (field === "pairMinEdgeCents") {
@@ -616,8 +640,11 @@ export default function Home() {
     pairMinEdgeCents5m: 0.5,
     pairMinEdgeCents15m: 0.5,
     pairMinEdgeCentsHourly: 0.5,
+    pairFeeBps: 2,
+    pairSlippageCents: 0.05,
     pairLookbackSeconds: 120,
     pairMaxMarketsPerRun: 4,
+    maxConditionExposureUsd: 0,
     enableBtc: true,
     enableEth: true,
     enableCadence5m: true,
@@ -633,6 +660,8 @@ export default function Home() {
     maxDailyLiveNotionalUsd: 0,
     maxDailyDrawdownUsd: 0,
     autoStopAt: 0,
+    sessionTargetPairsPerHour: 0,
+    sessionMinAvgNetEdgeCents: 0,
   };
   const activity = status?.recentActivity ?? [];
   const paperStats = status?.paperStats ?? {
@@ -643,7 +672,9 @@ export default function Home() {
     totalBudgetCapUsd: 0,
     totalBudgetUsedUsd: 0,
     totalExecutedEdgeCents: 0,
+    totalExecutedNetEdgeCents: 0,
     avgExecutedEdgeCents: 0,
+    avgExecutedNetEdgeCents: 0,
     recentRuns: [],
   };
   const avgTradesPerRun =
@@ -653,6 +684,7 @@ export default function Home() {
       ? (paperStats.totalBudgetUsedUsd / paperStats.totalBudgetCapUsd) * 100
       : 0;
   const avgExecutedEdgeCents = Number(paperStats.avgExecutedEdgeCents ?? 0);
+  const avgExecutedNetEdgeCents = Number(paperStats.avgExecutedNetEdgeCents ?? 0);
   const lastDiag = status?.state.lastStrategyDiagnostics;
   const rejectedEntries = Object.entries(lastDiag?.rejectedReasons ?? {}).sort(
     (a, b) => b[1] - a[1]
@@ -662,6 +694,35 @@ export default function Home() {
     totalRuns: 0,
     recentRuns: [] as StrategyDiagnostics[],
   };
+  const sessionWindowMs = 60 * 60 * 1000;
+  const sessionSample = diagnosticsHistory.recentRuns.filter(
+    (run) => run.timestamp >= Date.now() - sessionWindowMs
+  );
+  const sessionExecutedPairs = sessionSample.reduce(
+    (sum, run) => sum + (run.mode === "paper" ? run.paper : run.copied),
+    0
+  );
+  const sessionNetEdgeWeighted = sessionSample.reduce((sum, run) => {
+    const executedPairs = run.mode === "paper" ? run.paper : run.copied;
+    const avgNetEdge = run.avgExecutedNetEdgeCents ?? run.avgExecutedEdgeCents;
+    if (executedPairs <= 0 || avgNetEdge == null) return sum;
+    return sum + avgNetEdge * executedPairs;
+  }, 0);
+  const sessionAvgNetEdgeCents =
+    sessionExecutedPairs > 0 ? sessionNetEdgeWeighted / sessionExecutedPairs : 0;
+  const sessionTargetPairsPerHour = Math.max(0, Number(cfg.sessionTargetPairsPerHour) || 0);
+  const sessionMinAvgNetEdgeCents = Number(cfg.sessionMinAvgNetEdgeCents) || 0;
+  const sessionPaceOnTrack =
+    sessionTargetPairsPerHour <= 0 || sessionExecutedPairs >= sessionTargetPairsPerHour;
+  const sessionQualityOnTrack =
+    sessionMinAvgNetEdgeCents <= 0 ||
+    (sessionExecutedPairs > 0 && sessionAvgNetEdgeCents >= sessionMinAvgNetEdgeCents);
+  const sessionKpiStatus =
+    sessionTargetPairsPerHour <= 0 && sessionMinAvgNetEdgeCents <= 0
+      ? "Targets off"
+      : sessionPaceOnTrack && sessionQualityOnTrack
+        ? "On track"
+        : "Needs adjustment";
   const trendWindow = Math.max(1, trendRuns);
   const trendSample = diagnosticsHistory.recentRuns.slice(0, trendWindow);
   const trendCount = trendSample.length;
@@ -685,6 +746,13 @@ export default function Home() {
   );
   const trendAvgExecutedEdgeCents =
     trendExecutedPairs > 0 ? trendExecutedEdgeCentsWeighted / trendExecutedPairs : 0;
+  const trendExecutedNetEdgeCentsWeighted = trendSample.reduce((sum, run) => {
+    const executedPairs = run.mode === "paper" ? run.paper : run.copied;
+    if (executedPairs <= 0 || run.avgExecutedNetEdgeCents == null) return sum;
+    return sum + run.avgExecutedNetEdgeCents * executedPairs;
+  }, 0);
+  const trendAvgExecutedNetEdgeCents =
+    trendExecutedPairs > 0 ? trendExecutedNetEdgeCentsWeighted / trendExecutedPairs : 0;
   const trendErrorRuns = trendSample.filter((run) => Boolean(run.error) || run.failed > 0).length;
   const trendBudgetUsed = trendSample.reduce((sum, run) => sum + run.budgetUsedUsd, 0);
   const trendBudgetCap = trendSample.reduce((sum, run) => sum + run.budgetCapUsd, 0);
@@ -761,6 +829,7 @@ export default function Home() {
     .filter(Boolean)
     .join(", ") || "None";
   const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
+  const edgeQualitySummary = `fee ${cfg.pairFeeBps.toFixed(1)} bps · slippage ${cfg.pairSlippageCents.toFixed(2)}¢/leg`;
   const guardrailSummary = `max imbalances ${cfg.maxUnresolvedImbalancesPerRun} · unwind slippage ${cfg.unwindSellSlippageCents.toFixed(1)}¢ · unwind buffer ${cfg.unwindShareBufferPct.toFixed(0)}%`;
   const dailyCapSummary = `notional cap ${
     cfg.maxDailyLiveNotionalUsd > 0 ? `$${cfg.maxDailyLiveNotionalUsd.toFixed(0)}` : "off"
@@ -777,6 +846,14 @@ export default function Home() {
       : "auto-stop off";
   const runBudgetSummary =
     cfg.maxRunBudgetUsd > 0 ? `$${cfg.maxRunBudgetUsd.toFixed(2)} fixed cap` : `${cfg.walletUsagePercent}% wallet cap`;
+  const conditionExposureSummary =
+    cfg.maxConditionExposureUsd > 0
+      ? `$${cfg.maxConditionExposureUsd.toFixed(2)} / condition`
+      : "condition cap off";
+  const sessionTargetSummary =
+    cfg.sessionTargetPairsPerHour > 0 || cfg.sessionMinAvgNetEdgeCents > 0
+      ? `session target ${cfg.sessionTargetPairsPerHour.toFixed(0)} pairs/h @ ${cfg.sessionMinAvgNetEdgeCents.toFixed(2)}¢+`
+      : "session targets off";
   const paperEdgeSummary =
     cfg.mode === "paper" && cfg.paperAllowNegativeEdge
       ? `paper edge override ${cfg.paperMinEdgeCents.toFixed(1)}¢`
@@ -1071,7 +1148,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {paperEdgeSummary} · {runTimerSummary}
+            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {edgeQualitySummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1183,6 +1260,46 @@ export default function Home() {
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
             </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Fee buffer (bps)</p>
+              <input
+                type="number"
+                min={0}
+                max={200}
+                step={0.1}
+                value={cfg.pairFeeBps}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairFeeBps",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    200
+                  )
+                }
+                disabled={saving}
+                className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Slippage/leg (¢)</p>
+              <input
+                type="number"
+                min={0}
+                max={25}
+                step={0.01}
+                value={cfg.pairSlippageCents}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "pairSlippageCents",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    25
+                  )
+                }
+                disabled={saving}
+                className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
             </>
             )}
             <div>
@@ -1238,6 +1355,67 @@ export default function Home() {
                     parseFloat(e.target.value) || 0,
                     0,
                     1000000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Condition cap ($)</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.maxConditionExposureUsd || ""}
+                placeholder="0 = disabled"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "maxConditionExposureUsd",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    1000000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Target pairs/hour</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.sessionTargetPairsPerHour || ""}
+                placeholder="0 = off"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "sessionTargetPairsPerHour",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    2000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Target net edge (¢)</p>
+              <input
+                type="number"
+                min={-10}
+                max={50}
+                step={0.1}
+                value={cfg.sessionMinAvgNetEdgeCents || ""}
+                placeholder="0 = off"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "sessionMinAvgNetEdgeCents",
+                    parseFloat(e.target.value) || 0,
+                    -10,
+                    50
                   )
                 }
                 disabled={saving}
@@ -1601,7 +1779,7 @@ export default function Home() {
               {resettingPaperStats ? "Resetting…" : "Reset paper stats"}
             </button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
               <p className="text-[11px] text-zinc-500 uppercase">Runs</p>
               <p className="text-lg font-semibold text-zinc-200">{paperStats.totalRuns}</p>
@@ -1624,6 +1802,12 @@ export default function Home() {
                 {paperStats.totalSimulatedTrades > 0 ? `${avgExecutedEdgeCents.toFixed(2)}¢` : "—"}
               </p>
             </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Avg net edge</p>
+              <p className="text-lg font-semibold text-zinc-200">
+                {paperStats.totalSimulatedTrades > 0 ? `${avgExecutedNetEdgeCents.toFixed(2)}¢` : "—"}
+              </p>
+            </div>
           </div>
           <p className="text-xs text-zinc-500">
             Avg pairs/run: {avgTradesPerRun.toFixed(2)} · Failed runs: {paperStats.totalFailed}
@@ -1632,6 +1816,55 @@ export default function Home() {
           {paperStats.lastError && (
             <p className="text-xs text-red-400 mt-1">{paperStats.lastError}</p>
           )}
+        </section>
+
+        {/* Session KPI targeting */}
+        <section className="mb-6 p-5 rounded-xl bg-zinc-900/40 border border-zinc-800/40">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">
+            Session KPI targeting (last 60m)
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Executed pairs</p>
+              <p className="text-lg font-semibold text-zinc-200">{sessionExecutedPairs}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Avg net edge</p>
+              <p className="text-lg font-semibold text-zinc-200">
+                {sessionExecutedPairs > 0 ? `${sessionAvgNetEdgeCents.toFixed(2)}¢` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Pace target</p>
+              <p className="text-lg font-semibold text-zinc-200">
+                {sessionTargetPairsPerHour > 0 ? `${sessionTargetPairsPerHour.toFixed(0)} / h` : "off"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Quality target</p>
+              <p className="text-lg font-semibold text-zinc-200">
+                {sessionMinAvgNetEdgeCents > 0 ? `${sessionMinAvgNetEdgeCents.toFixed(2)}¢+` : "off"}
+              </p>
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">
+            Status:{" "}
+            <span
+              className={
+                sessionKpiStatus === "On track"
+                  ? "text-emerald-300"
+                  : sessionKpiStatus === "Needs adjustment"
+                    ? "text-amber-300"
+                    : "text-zinc-300"
+              }
+            >
+              {sessionKpiStatus}
+            </span>
+            {" · "}
+            Pace {sessionPaceOnTrack ? "ok" : "below target"}
+            {" · "}
+            Quality {sessionQualityOnTrack ? "ok" : "below target"}
+          </p>
         </section>
 
         {/* Strategy diagnostics */}
@@ -1668,8 +1901,14 @@ export default function Home() {
                 {lastDiag.avgExecutedEdgeCents != null && (lastDiag.mode === "paper" ? lastDiag.paper : lastDiag.copied) > 0 && (
                   <> Avg executed edge: <span className="text-zinc-300">{lastDiag.avgExecutedEdgeCents.toFixed(2)}¢</span> ·</>
                 )}
+                {lastDiag.avgExecutedNetEdgeCents != null && (lastDiag.mode === "paper" ? lastDiag.paper : lastDiag.copied) > 0 && (
+                  <> Avg net edge: <span className={lastDiag.avgExecutedNetEdgeCents < 0 ? "text-amber-400" : "text-zinc-300"}>{lastDiag.avgExecutedNetEdgeCents.toFixed(2)}¢</span> ·</>
+                )}
                 {lastDiag.maxEdgeCentsSeen != null && (
                   <> Best edge seen: <span className={lastDiag.maxEdgeCentsSeen < 0 ? "text-amber-400" : "text-zinc-300"}>{lastDiag.maxEdgeCentsSeen.toFixed(2)}¢</span> ·</>
+                )}
+                {lastDiag.maxNetEdgeCentsSeen != null && (
+                  <> Best net edge: <span className={lastDiag.maxNetEdgeCentsSeen < 0 ? "text-amber-400" : "text-zinc-300"}>{lastDiag.maxNetEdgeCentsSeen.toFixed(2)}¢</span> ·</>
                 )}
                 {" "}Updated: {new Date(lastDiag.timestamp).toLocaleString()}
               </p>
@@ -1778,7 +2017,7 @@ export default function Home() {
           </div>
           {trendCount > 0 ? (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+              <div className="grid grid-cols-2 md:grid-cols-7 gap-3 mb-4">
                 <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
                   <p className="text-[11px] text-zinc-500 uppercase">Runs used</p>
                   <p className="text-lg font-semibold text-zinc-200">{trendCount}</p>
@@ -1803,6 +2042,12 @@ export default function Home() {
                   <p className="text-[11px] text-zinc-500 uppercase">Avg executed edge</p>
                   <p className="text-lg font-semibold text-zinc-200">
                     {trendExecutedPairs > 0 ? `${trendAvgExecutedEdgeCents.toFixed(2)}¢` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+                  <p className="text-[11px] text-zinc-500 uppercase">Avg net edge</p>
+                  <p className="text-lg font-semibold text-zinc-200">
+                    {trendExecutedPairs > 0 ? `${trendAvgExecutedNetEdgeCents.toFixed(2)}¢` : "—"}
                   </p>
                 </div>
               </div>

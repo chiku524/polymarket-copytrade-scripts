@@ -206,10 +206,16 @@ export interface CopyTraderConfig {
   pairMinEdgeCents15m: number;
   /** Min edge for hourly cadence signals */
   pairMinEdgeCentsHourly: number;
+  /** Estimated entry fee in basis points used for net-edge gating */
+  pairFeeBps: number;
+  /** Estimated per-leg slippage in cents used for net-edge gating */
+  pairSlippageCents: number;
   /** Recency window for global market signal discovery */
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
   pairMaxMarketsPerRun: number;
+  /** Max exposure per condition within a run (0 = disabled) */
+  maxConditionExposureUsd: number;
   /** Include BTC Up/Down markets in strategy */
   enableBtc: boolean;
   /** Include ETH Up/Down markets in strategy */
@@ -238,6 +244,10 @@ export interface CopyTraderConfig {
   maxDailyDrawdownUsd: number;
   /** Auto-stop timestamp in ms epoch (0 = disabled) */
   autoStopAt: number;
+  /** Target executed pairs per hour for session pacing (0 = disabled) */
+  sessionTargetPairsPerHour: number;
+  /** Target minimum session average net edge in cents (0 = disabled) */
+  sessionMinAvgNetEdgeCents: number;
 }
 
 export interface SafetyLatchState {
@@ -289,9 +299,11 @@ export interface StrategyDiagnostics {
   budgetCapUsd: number;
   budgetUsedUsd: number;
   avgExecutedEdgeCents?: number;
+  avgExecutedNetEdgeCents?: number;
   error?: string;
   timestamp: number;
   maxEdgeCentsSeen?: number;
+  maxNetEdgeCentsSeen?: number;
   minPairSumSeen?: number;
 }
 
@@ -332,7 +344,9 @@ export interface PaperRunStat {
   budgetCapUsd: number;
   budgetUsedUsd: number;
   executedEdgeCentsSum?: number;
+  executedNetEdgeCentsSum?: number;
   avgExecutedEdgeCents?: number;
+  avgExecutedNetEdgeCents?: number;
   error?: string;
 }
 
@@ -344,7 +358,9 @@ export interface PaperStats {
   totalBudgetCapUsd: number;
   totalBudgetUsedUsd: number;
   totalExecutedEdgeCents: number;
+  totalExecutedNetEdgeCents: number;
   avgExecutedEdgeCents: number;
+  avgExecutedNetEdgeCents: number;
   lastRunAt?: number;
   lastError?: string;
   recentRuns: PaperRunStat[];
@@ -363,8 +379,11 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairMinEdgeCents5m: 0.5,
   pairMinEdgeCents15m: 0.5,
   pairMinEdgeCentsHourly: 0.5,
+  pairFeeBps: 2,
+  pairSlippageCents: 0.05,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
+  maxConditionExposureUsd: 0,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -379,6 +398,8 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   maxDailyLiveNotionalUsd: 0,
   maxDailyDrawdownUsd: 0,
   autoStopAt: 0,
+  sessionTargetPairsPerHour: 0,
+  sessionMinAvgNetEdgeCents: 0,
 };
 
 const DEFAULT_PAPER_STATS: PaperStats = {
@@ -389,7 +410,9 @@ const DEFAULT_PAPER_STATS: PaperStats = {
   totalBudgetCapUsd: 0,
   totalBudgetUsedUsd: 0,
   totalExecutedEdgeCents: 0,
+  totalExecutedNetEdgeCents: 0,
   avgExecutedEdgeCents: 0,
+  avgExecutedNetEdgeCents: 0,
   recentRuns: [],
 };
 
@@ -500,9 +523,15 @@ function normalizeStrategyDiagnostics(value: unknown): StrategyDiagnostics {
       typeof raw.avgExecutedEdgeCents === "number"
         ? toFiniteNumber(raw.avgExecutedEdgeCents, 0)
         : undefined,
+    avgExecutedNetEdgeCents:
+      typeof raw.avgExecutedNetEdgeCents === "number"
+        ? toFiniteNumber(raw.avgExecutedNetEdgeCents, 0)
+        : undefined,
     error: typeof raw.error === "string" ? raw.error : undefined,
     timestamp: Math.max(0, toFiniteNumber(raw.timestamp, Date.now())),
     maxEdgeCentsSeen: typeof raw.maxEdgeCentsSeen === "number" ? raw.maxEdgeCentsSeen : undefined,
+    maxNetEdgeCentsSeen:
+      typeof raw.maxNetEdgeCentsSeen === "number" ? raw.maxNetEdgeCentsSeen : undefined,
     minPairSumSeen: typeof raw.minPairSumSeen === "number" ? raw.minPairSumSeen : undefined,
   };
 }
@@ -557,6 +586,12 @@ function sanitizeConfig(
       0,
       50
     ),
+    pairFeeBps: clamp(toFiniteNumber(raw.pairFeeBps, current.pairFeeBps), 0, 200),
+    pairSlippageCents: clamp(
+      toFiniteNumber(raw.pairSlippageCents, current.pairSlippageCents),
+      0,
+      25
+    ),
     pairLookbackSeconds: clamp(
       toFiniteNumber(raw.pairLookbackSeconds, current.pairLookbackSeconds),
       20,
@@ -566,6 +601,11 @@ function sanitizeConfig(
       toFiniteNumber(raw.pairMaxMarketsPerRun, current.pairMaxMarketsPerRun),
       1,
       20
+    ),
+    maxConditionExposureUsd: clamp(
+      toFiniteNumber(raw.maxConditionExposureUsd, current.maxConditionExposureUsd),
+      0,
+      10000000
     ),
     enableBtc: raw.enableBtc !== false,
     enableEth: raw.enableEth !== false,
@@ -610,6 +650,16 @@ function sanitizeConfig(
       Math.floor(toFiniteNumber(raw.autoStopAt, current.autoStopAt)),
       0,
       4102444800000 // year 2100-01-01 UTC
+    ),
+    sessionTargetPairsPerHour: clamp(
+      toFiniteNumber(raw.sessionTargetPairsPerHour, current.sessionTargetPairsPerHour),
+      0,
+      2000
+    ),
+    sessionMinAvgNetEdgeCents: clamp(
+      toFiniteNumber(raw.sessionMinAvgNetEdgeCents, current.sessionMinAvgNetEdgeCents),
+      -10,
+      50
     ),
   };
 }
@@ -657,10 +707,25 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.pairMinEdgeHourly ??
       c.pairMinEdgeCents ??
       DEFAULT_CONFIG.pairMinEdgeCentsHourly,
+    pairFeeBps:
+      c.pairFeeBps ??
+      c.pairEstimatedFeeBps ??
+      c.estimatedFeeBps ??
+      DEFAULT_CONFIG.pairFeeBps,
+    pairSlippageCents:
+      c.pairSlippageCents ??
+      c.pairEstimatedSlippageCents ??
+      c.estimatedSlippageCents ??
+      DEFAULT_CONFIG.pairSlippageCents,
     pairLookbackSeconds:
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:
       c.pairMaxMarketsPerRun ?? c.maxSignalsPerRun ?? DEFAULT_CONFIG.pairMaxMarketsPerRun,
+    maxConditionExposureUsd:
+      c.maxConditionExposureUsd ??
+      c.maxConditionNotionalUsd ??
+      c.maxPerConditionUsd ??
+      DEFAULT_CONFIG.maxConditionExposureUsd,
     enableBtc: c.enableBtc,
     enableEth: c.enableEth,
     enableCadence5m: c.enableCadence5m,
@@ -694,6 +759,16 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.maxDailyLossUsd ??
       DEFAULT_CONFIG.maxDailyDrawdownUsd,
     autoStopAt: c.autoStopAt ?? c.runUntilTs ?? c.runUntilAt ?? c.autoPauseAt ?? 0,
+    sessionTargetPairsPerHour:
+      c.sessionTargetPairsPerHour ??
+      c.sessionPairsPerHourTarget ??
+      c.targetPairsPerHour ??
+      0,
+    sessionMinAvgNetEdgeCents:
+      c.sessionMinAvgNetEdgeCents ??
+      c.sessionNetEdgeTargetCents ??
+      c.targetAvgNetEdgeCents ??
+      0,
   };
 
   return sanitizeConfig(
@@ -764,8 +839,11 @@ export async function getPaperStats(): Promise<PaperStats> {
   if (!s) return { ...DEFAULT_PAPER_STATS };
   const totalSimulatedTrades = toFiniteNumber(s.totalSimulatedTrades, 0);
   const totalExecutedEdgeCents = toFiniteNumber(s.totalExecutedEdgeCents, 0);
+  const totalExecutedNetEdgeCents = toFiniteNumber(s.totalExecutedNetEdgeCents, 0);
   const avgExecutedEdgeCents =
     totalSimulatedTrades > 0 ? totalExecutedEdgeCents / totalSimulatedTrades : 0;
+  const avgExecutedNetEdgeCents =
+    totalSimulatedTrades > 0 ? totalExecutedNetEdgeCents / totalSimulatedTrades : 0;
   return {
     totalRuns: toFiniteNumber(s.totalRuns, 0),
     totalSimulatedTrades,
@@ -774,7 +852,9 @@ export async function getPaperStats(): Promise<PaperStats> {
     totalBudgetCapUsd: toFiniteNumber(s.totalBudgetCapUsd, 0),
     totalBudgetUsedUsd: toFiniteNumber(s.totalBudgetUsedUsd, 0),
     totalExecutedEdgeCents,
+    totalExecutedNetEdgeCents,
     avgExecutedEdgeCents,
+    avgExecutedNetEdgeCents,
     lastRunAt: s.lastRunAt,
     lastError: s.lastError,
     recentRuns: Array.isArray(s.recentRuns)
@@ -787,9 +867,14 @@ export async function getPaperStats(): Promise<PaperStats> {
             budgetCapUsd: toFiniteNumber(r.budgetCapUsd, 0),
             budgetUsedUsd: toFiniteNumber(r.budgetUsedUsd, 0),
             executedEdgeCentsSum: toFiniteNumber(r.executedEdgeCentsSum, 0),
+            executedNetEdgeCentsSum: toFiniteNumber(r.executedNetEdgeCentsSum, 0),
             avgExecutedEdgeCents:
               typeof r.avgExecutedEdgeCents === "number"
                 ? toFiniteNumber(r.avgExecutedEdgeCents, 0)
+                : undefined,
+            avgExecutedNetEdgeCents:
+              typeof r.avgExecutedNetEdgeCents === "number"
+                ? toFiniteNumber(r.avgExecutedNetEdgeCents, 0)
                 : undefined,
             error: typeof r.error === "string" ? r.error : undefined,
           }))
@@ -801,6 +886,7 @@ export async function getPaperStats(): Promise<PaperStats> {
 export async function recordPaperRun(run: PaperRunStat): Promise<PaperStats> {
   const current = await getPaperStats();
   const normalizedExecutedEdgeCentsSum = toFiniteNumber(run.executedEdgeCentsSum, 0);
+  const normalizedExecutedNetEdgeCentsSum = toFiniteNumber(run.executedNetEdgeCentsSum, 0);
   const normalizedSimulatedTrades = toFiniteNumber(run.simulatedTrades, 0);
   const normalizedRun: PaperRunStat = {
     timestamp: toFiniteNumber(run.timestamp, Date.now()),
@@ -810,13 +896,20 @@ export async function recordPaperRun(run: PaperRunStat): Promise<PaperStats> {
     budgetCapUsd: toFiniteNumber(run.budgetCapUsd, 0),
     budgetUsedUsd: toFiniteNumber(run.budgetUsedUsd, 0),
     executedEdgeCentsSum: normalizedExecutedEdgeCentsSum,
+    executedNetEdgeCentsSum: normalizedExecutedNetEdgeCentsSum,
     avgExecutedEdgeCents:
       normalizedSimulatedTrades > 0
         ? normalizedExecutedEdgeCentsSum / normalizedSimulatedTrades
         : undefined,
+    avgExecutedNetEdgeCents:
+      normalizedSimulatedTrades > 0
+        ? normalizedExecutedNetEdgeCentsSum / normalizedSimulatedTrades
+        : undefined,
     error: run.error,
   };
   const totalExecutedEdgeCents = current.totalExecutedEdgeCents + normalizedExecutedEdgeCentsSum;
+  const totalExecutedNetEdgeCents =
+    current.totalExecutedNetEdgeCents + normalizedExecutedNetEdgeCentsSum;
   const totalSimulatedTrades = current.totalSimulatedTrades + normalizedRun.simulatedTrades;
   const updated: PaperStats = {
     totalRuns: current.totalRuns + 1,
@@ -826,7 +919,10 @@ export async function recordPaperRun(run: PaperRunStat): Promise<PaperStats> {
     totalBudgetCapUsd: current.totalBudgetCapUsd + normalizedRun.budgetCapUsd,
     totalBudgetUsedUsd: current.totalBudgetUsedUsd + normalizedRun.budgetUsedUsd,
     totalExecutedEdgeCents,
+    totalExecutedNetEdgeCents,
     avgExecutedEdgeCents: totalSimulatedTrades > 0 ? totalExecutedEdgeCents / totalSimulatedTrades : 0,
+    avgExecutedNetEdgeCents:
+      totalSimulatedTrades > 0 ? totalExecutedNetEdgeCents / totalSimulatedTrades : 0,
     lastRunAt: normalizedRun.timestamp,
     lastError: normalizedRun.error,
     recentRuns: [normalizedRun, ...current.recentRuns].slice(0, 100),

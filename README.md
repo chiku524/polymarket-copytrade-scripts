@@ -148,10 +148,15 @@ Docs: [Polymarket Developer Quickstart](https://docs.polymarket.com/quickstart/o
 - **Mode**: `Off` (paused), `Paper` (simulate only), `Live` (real orders)
 - **Paper high-data preset**: one-click profile for dense paper sampling (`Paper` mode, 0.1c edge floor, max markets/run, focused on BTC/ETH 5m+15m)
 - **Wallet usage % / run**: caps how much balance can be spent each run in Paper/Live
+- **Condition exposure cap**: optional `$` cap per market condition per run to reduce concentration risk
 - **Coins**: enable/disable `BTC` and `ETH` independently
 - **Cadence filters**: enable/disable `5m`, `15m`, and `Hourly` Up/Down markets
 - **Cadence min-edge thresholds**: tune different edge requirements for `5m`, `15m`, and `Hourly`
+- **Edge quality buffers**: configure estimated fee (`bps`) and slippage (`¢/leg`) so execution uses net edge, not just raw edge
+- **Cadence-aware ranking**: execution priority favors stronger net-edge surplus with cadence-specific freshness weighting
+- **Market freshness guards**: stale signals and large per-leg timestamp skews are rejected before execution
 - **Diagnostics trend (last N runs)**: view rolling execution/rejection trends and Phase 2 coin/cadence mix
+- **Session KPI targeting**: set optional pairs/hour and avg net-edge targets and track on-track status over last 60 minutes
 - **Auto-tune suggestions**: one-click suggested cadence edge updates from trend diagnostics
 - **Live safety guardrails**: configurable `max unresolved imbalances/run`, `unwind slippage`, and `unwind share buffer` for one-leg recovery
 - **Daily live risk caps**: configurable max daily notional and max daily drawdown hard-stops
