@@ -91,6 +91,8 @@ interface Config {
   pairSlippageCents: number;
   pairLookbackSeconds: number;
   pairMaxMarketsPerRun: number;
+  reentryMaxEntriesPerSignal: number;
+  reentryEdgeStepCents: number;
   maxConditionExposureUsd: number;
   enableBtc: boolean;
   enableEth: boolean;
@@ -118,6 +120,8 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   maxRunBudgetUsd: 0,
   pairLookbackSeconds: 300,
   pairMaxMarketsPerRun: 20,
+  reentryMaxEntriesPerSignal: 4,
+  reentryEdgeStepCents: 0.1,
   maxConditionExposureUsd: 0,
   pairMinEdgeCents: 0.1,
   paperAllowNegativeEdge: true,
@@ -152,6 +156,8 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   pairSlippageCents: 0.05,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
+  reentryMaxEntriesPerSignal: 2,
+  reentryEdgeStepCents: 0.15,
   maxConditionExposureUsd: 0,
   enableBtc: true,
   enableEth: true,
@@ -574,6 +580,8 @@ export default function Home() {
         pairSlippageCents: 0.05,
         pairLookbackSeconds: 120,
         pairMaxMarketsPerRun: 4,
+        reentryMaxEntriesPerSignal: 2,
+        reentryEdgeStepCents: 0.15,
         maxConditionExposureUsd: 0,
         enableBtc: true,
         enableEth: true,
@@ -644,6 +652,8 @@ export default function Home() {
     pairSlippageCents: 0.05,
     pairLookbackSeconds: 120,
     pairMaxMarketsPerRun: 4,
+    reentryMaxEntriesPerSignal: 2,
+    reentryEdgeStepCents: 0.15,
     maxConditionExposureUsd: 0,
     enableBtc: true,
     enableEth: true,
@@ -850,6 +860,10 @@ export default function Home() {
     cfg.maxConditionExposureUsd > 0
       ? `$${cfg.maxConditionExposureUsd.toFixed(2)} / condition`
       : "condition cap off";
+  const reentrySummary =
+    cfg.reentryMaxEntriesPerSignal > 1
+      ? `${cfg.reentryMaxEntriesPerSignal}x/signal @ ${cfg.reentryEdgeStepCents.toFixed(2)}¢ step`
+      : "re-entry off";
   const sessionTargetSummary =
     cfg.sessionTargetPairsPerHour > 0 || cfg.sessionMinAvgNetEdgeCents > 0
       ? `session target ${cfg.sessionTargetPairsPerHour.toFixed(0)} pairs/h @ ${cfg.sessionMinAvgNetEdgeCents.toFixed(2)}¢+`
@@ -1148,7 +1162,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-            {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {edgeQualitySummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
+                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {reentrySummary} · {edgeQualitySummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1511,6 +1525,46 @@ export default function Home() {
                 }
                 disabled={saving}
                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Re-entries/signal</p>
+              <input
+                type="number"
+                min={1}
+                max={6}
+                step={1}
+                value={cfg.reentryMaxEntriesPerSignal}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "reentryMaxEntriesPerSignal",
+                    parseInt(e.target.value, 10) || 1,
+                    1,
+                    6
+                  )
+                }
+                disabled={saving}
+                className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Re-entry step (¢)</p>
+              <input
+                type="number"
+                min={0.01}
+                max={10}
+                step={0.01}
+                value={cfg.reentryEdgeStepCents}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "reentryEdgeStepCents",
+                    parseFloat(e.target.value) || 0.1,
+                    0.01,
+                    10
+                  )
+                }
+                disabled={saving}
+                className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
               />
             </div>
             <div className="flex items-center gap-2 col-span-2">

@@ -205,6 +205,8 @@ async function runCopyTradeHandler() {
         pairSlippageCents: config.pairSlippageCents,
         pairLookbackSeconds: config.pairLookbackSeconds,
         pairMaxMarketsPerRun: config.pairMaxMarketsPerRun,
+        reentryMaxEntriesPerSignal: config.reentryMaxEntriesPerSignal,
+        reentryEdgeStepCents: config.reentryEdgeStepCents,
         maxConditionExposureUsd: config.maxConditionExposureUsd,
         enableBtc: config.enableBtc,
         enableEth: config.enableEth,

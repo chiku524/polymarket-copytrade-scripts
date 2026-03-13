@@ -472,6 +472,8 @@ export async function runPairedStrategy(
     pairSlippageCents: number;
     pairLookbackSeconds: number;
     pairMaxMarketsPerRun: number;
+    reentryMaxEntriesPerSignal: number;
+    reentryEdgeStepCents: number;
     maxConditionExposureUsd: number;
     enableBtc: boolean;
     enableEth: boolean;
@@ -552,6 +554,14 @@ export async function runPairedStrategy(
       : null;
   const lookbackSeconds = Math.max(20, Number(config.pairLookbackSeconds) || 120);
   const maxMarketsPerRun = Math.max(1, Math.min(20, Number(config.pairMaxMarketsPerRun) || 4));
+  const reentryMaxEntriesPerSignal = Math.max(
+    1,
+    Math.min(6, Math.floor(Number(config.reentryMaxEntriesPerSignal) || 1))
+  );
+  const reentryEdgeStepCents = Math.max(
+    0.01,
+    Math.min(10, Number(config.reentryEdgeStepCents) || 0.1)
+  );
   const maxConditionExposureUsd = Math.max(0, Number(config.maxConditionExposureUsd) || 0);
   const pairChunkUsd = Math.max(1, Number(config.pairChunkUsd) || 3);
   const pairFeeBps = Math.max(0, Math.min(200, Number(config.pairFeeBps) || 0));
@@ -723,18 +733,15 @@ export async function runPairedStrategy(
       return b.signal.latestTimestamp - a.signal.latestTimestamp;
     });
 
-  for (const rankedSignal of rankedSignals) {
+  const buildSignalKey = (conditionId: string, latestTimestamp: number, entryIndex: number): string =>
+    entryIndex <= 0
+      ? `${conditionId}|${latestTimestamp}`
+      : `${conditionId}|${latestTimestamp}|reentry:${entryIndex}`;
+
+  signalsLoop: for (const rankedSignal of rankedSignals) {
     const signal = rankedSignal.signal;
     const netEdgeCents = rankedSignal.netEdgeCents;
     const signalMinEdgeCents = rankedSignal.signalMinEdgeCents;
-    if (result.eligibleSignals >= maxMarketsPerRun) {
-      reject("max_markets_per_run_reached");
-      break;
-    }
-    if (remainingBudgetUsd < (mode === "live" ? 2 : 0.2)) {
-      reject("insufficient_remaining_budget");
-      break;
-    }
     const maxSignalAgeSec = Math.max(
       30,
       Math.min(lookbackSeconds, cadenceMaxSignalAgeSec[signal.cadence] ?? lookbackSeconds)
@@ -766,244 +773,288 @@ export async function runPairedStrategy(
       );
       continue;
     }
-    const signalKey = `${signal.conditionId}|${signal.latestTimestamp}`;
-    if (copiedSet.has(signalKey)) {
-      reject("signal_not_new");
-      continue;
-    }
 
     const pairSum = signal.pairSum;
     if (pairSum <= 0 || pairSum >= 2) {
       reject("invalid_pair_sum");
       continue;
     }
-
-    let pairSpend = Math.min(pairChunkUsd, remainingBudgetUsd, conditionExposureRemaining);
-    if (pairSpend <= 0) {
-      reject("pair_spend_non_positive");
-      continue;
-    }
-    const shares = pairSpend / pairSum;
-    let legAUsd = shares * outcomeA.price;
-    let legBUsd = shares * outcomeB.price;
-
-    if (legAUsd < minLegUsd || legBUsd < minLegUsd) {
-      reject("leg_below_min_bet");
-      continue;
-    }
-    if (mode === "live") {
-      if (legAUsd < POLYMARKET_MIN_ORDER_USD || legBUsd < POLYMARKET_MIN_ORDER_USD) {
-        if (!config.floorToPolymarketMin) {
-          reject("leg_below_polymarket_min_no_floor");
-          continue;
-        }
-        legAUsd = Math.max(POLYMARKET_MIN_ORDER_USD, legAUsd);
-        legBUsd = Math.max(POLYMARKET_MIN_ORDER_USD, legBUsd);
-      }
-      pairSpend = legAUsd + legBUsd;
-      if (pairSpend > conditionExposureRemaining) {
-        reject("condition_exposure_cap_reached");
-        continue;
-      }
-      if (pairSpend > remainingBudgetUsd) {
-        reject("pair_exceeds_remaining_budget");
-        continue;
-      }
-    }
-
-    result.eligibleSignals++;
-    bumpBreakdown(result.eligibleBreakdown, signal);
-
-    if (mode === "paper") {
-      copiedSet.add(signalKey);
-      result.copied++;
-      result.paper++;
-      result.executedEdgeCentsSum += signal.edge * 100;
-      result.executedNetEdgeCentsSum += netEdgeCents;
-      bumpBreakdown(result.executedBreakdown, signal);
-      result.simulatedVolumeUsd += legAUsd + legBUsd;
-      addConditionExposure(signal.conditionId, legAUsd + legBUsd);
-      remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
-      lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
-      result.copiedTrades.push({
-        title: signal.title,
-        outcome: outcomeA.outcome,
-        side: `PAPER BUY (${signal.coin} pair)`,
-        amountUsd: legAUsd,
-        price: outcomeA.price,
-        asset: outcomeA.asset,
-        timestamp: Date.now(),
-      });
-      result.copiedTrades.push({
-        title: signal.title,
-        outcome: outcomeB.outcome,
-        side: `PAPER BUY (${signal.coin} pair)`,
-        amountUsd: legBUsd,
-        price: outcomeB.price,
-        asset: outcomeB.asset,
-        timestamp: Date.now(),
-      });
-      continue;
-    }
-
-    if (!client) {
-      result.failed++;
-      reject("missing_clob_client_live");
-      result.error = clipError(result.error, "Missing CLOB client in live mode");
-      continue;
-    }
-
-    const recordLivePair = () => {
-      copiedSet.add(signalKey);
-      result.copied++;
-      result.executedEdgeCentsSum += signal.edge * 100;
-      result.executedNetEdgeCentsSum += netEdgeCents;
-      bumpBreakdown(result.executedBreakdown, signal);
-      addConditionExposure(signal.conditionId, legAUsd + legBUsd);
-      remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
-      lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
-      result.copiedTrades.push({
-        title: signal.title,
-        outcome: outcomeA.outcome,
-        side: `BUY (${signal.coin} pair)`,
-        amountUsd: legAUsd,
-        price: outcomeA.price,
-        asset: outcomeA.asset,
-        timestamp: Date.now(),
-      });
-      result.copiedTrades.push({
-        title: signal.title,
-        outcome: outcomeB.outcome,
-        side: `BUY (${signal.coin} pair)`,
-        amountUsd: legBUsd,
-        price: outcomeB.price,
-        asset: outcomeB.asset,
-        timestamp: Date.now(),
-      });
-    };
-
-    const placeBuyLeg = async (
-      tokenID: string,
-      amountUsd: number,
-      quotePrice: number
-    ): Promise<{ ok: boolean; error: string }> => {
-      try {
-        const buyPrice = Math.max(
-          0.001,
-          Math.min(0.999, quotePrice + liveBuyPriceBuffer)
-        );
-        const resp = await client.createAndPostMarketOrder(
-          {
-            tokenID,
-            amount: amountUsd,
-            side: Side.BUY,
-            orderType: OrderType.FOK,
-            price: buyPrice,
-          },
-          undefined,
-          OrderType.FOK
-        );
-        if (responseOk(resp)) return { ok: true, error: "" };
-        return { ok: false, error: responseError(resp, "BUY leg rejected") };
-      } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) };
-      }
-    };
-
-    const placeUnwindSell = async (
-      tokenID: string,
-      shareAmount: number,
-      minPrice: number
-    ): Promise<{ ok: boolean; error: string }> => {
-      try {
-        const resp = await client.createAndPostMarketOrder(
-          {
-            tokenID,
-            amount: shareAmount,
-            side: Side.SELL,
-            price: Math.max(0.01, Math.min(0.99, minPrice)),
-            orderType: OrderType.FOK,
-          },
-          undefined,
-          OrderType.FOK
-        );
-        if (responseOk(resp)) return { ok: true, error: "" };
-        return { ok: false, error: responseError(resp, "Unwind sell rejected") };
-      } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) };
-      }
-    };
-
-    const legA = await placeBuyLeg(outcomeA.asset, legAUsd, outcomeA.price);
-    if (!legA.ok) {
-      result.failed++;
-      reject("live_leg_a_rejected");
-      result.error = clipError(result.error, legA.error || "Leg A rejected");
-      continue;
-    }
-
-    const legB = await placeBuyLeg(outcomeB.asset, legBUsd, outcomeB.price);
-    if (legB.ok) {
-      recordLivePair();
-      continue;
-    }
-
-    reject("live_partial_fill_detected");
-    const retryB = await placeBuyLeg(outcomeB.asset, legBUsd, outcomeB.price);
-    if (retryB.ok) {
-      reject("live_partial_recovered_leg_b_retry");
-      recordLivePair();
-      continue;
-    }
-
-    let unwindShareAmount =
-      (legAUsd / Math.max(0.001, outcomeA.price)) * unwindShareBuffer;
-    try {
-      const positions = await getPositions(myAddress, 200);
-      const legAPosition = positions.find(
-        (p) => !p.redeemable && p.asset === outcomeA.asset && Number(p.size) > 0
-      );
-      if (legAPosition) {
-        // Use the current held shares for unwind sizing to avoid oversell rejections.
-        unwindShareAmount = Math.max(
-          0.001,
-          Number(legAPosition.size) * unwindShareBuffer
-        );
-      } else {
-        reject("live_partial_unwind_position_not_found");
-      }
-    } catch {
-      reject("live_partial_unwind_position_lookup_failed");
-    }
-    const unwindMinPrice = Math.max(0.01, outcomeA.price - unwindSellSlippage);
-    const unwind = await placeUnwindSell(
-      outcomeA.asset,
-      Math.max(0.001, unwindShareAmount),
-      unwindMinPrice
+    const extraEntriesByEdge = Math.max(
+      0,
+      Math.floor((netEdgeCents - signalMinEdgeCents) / reentryEdgeStepCents)
     );
-    if (unwind.ok) {
+    const maxEntriesForSignal = Math.max(
+      1,
+      Math.min(reentryMaxEntriesPerSignal, 1 + extraEntriesByEdge)
+    );
+    let acceptedEntryForSignal = false;
+    for (let entryIndex = 0; entryIndex < maxEntriesForSignal; entryIndex++) {
+      if (result.eligibleSignals >= maxMarketsPerRun) {
+        reject("max_markets_per_run_reached");
+        break signalsLoop;
+      }
+      if (remainingBudgetUsd < (mode === "live" ? 2 : 0.2)) {
+        reject("insufficient_remaining_budget");
+        break signalsLoop;
+      }
+
+      const conditionExposureRemaining =
+        maxConditionExposureUsd > 0
+          ? maxConditionExposureUsd - conditionExposureUsed(signal.conditionId)
+          : Infinity;
+      if (conditionExposureRemaining <= 0) {
+        if (!acceptedEntryForSignal) {
+          reject("condition_exposure_cap_reached");
+        }
+        break;
+      }
+      const signalKey = buildSignalKey(signal.conditionId, signal.latestTimestamp, entryIndex);
+      if (copiedSet.has(signalKey)) {
+        if (!acceptedEntryForSignal && entryIndex === 0) {
+          reject("signal_not_new");
+        }
+        continue;
+      }
+
+      let pairSpend = Math.min(pairChunkUsd, remainingBudgetUsd, conditionExposureRemaining);
+      if (pairSpend <= 0) {
+        if (!acceptedEntryForSignal) {
+          reject("pair_spend_non_positive");
+        }
+        break;
+      }
+      const shares = pairSpend / pairSum;
+      let legAUsd = shares * outcomeA.price;
+      let legBUsd = shares * outcomeB.price;
+
+      if (legAUsd < minLegUsd || legBUsd < minLegUsd) {
+        if (!acceptedEntryForSignal) {
+          reject("leg_below_min_bet");
+        }
+        break;
+      }
+      if (mode === "live") {
+        if (legAUsd < POLYMARKET_MIN_ORDER_USD || legBUsd < POLYMARKET_MIN_ORDER_USD) {
+          if (!config.floorToPolymarketMin) {
+            if (!acceptedEntryForSignal) {
+              reject("leg_below_polymarket_min_no_floor");
+            }
+            break;
+          }
+          legAUsd = Math.max(POLYMARKET_MIN_ORDER_USD, legAUsd);
+          legBUsd = Math.max(POLYMARKET_MIN_ORDER_USD, legBUsd);
+        }
+        pairSpend = legAUsd + legBUsd;
+        if (pairSpend > conditionExposureRemaining) {
+          if (!acceptedEntryForSignal) {
+            reject("condition_exposure_cap_reached");
+          }
+          break;
+        }
+        if (pairSpend > remainingBudgetUsd) {
+          if (!acceptedEntryForSignal) {
+            reject("pair_exceeds_remaining_budget");
+          }
+          break;
+        }
+      }
+
+      result.eligibleSignals++;
+      acceptedEntryForSignal = true;
+      bumpBreakdown(result.eligibleBreakdown, signal);
+
+      if (mode === "paper") {
+        copiedSet.add(signalKey);
+        result.copied++;
+        result.paper++;
+        result.executedEdgeCentsSum += signal.edge * 100;
+        result.executedNetEdgeCentsSum += netEdgeCents;
+        bumpBreakdown(result.executedBreakdown, signal);
+        result.simulatedVolumeUsd += legAUsd + legBUsd;
+        addConditionExposure(signal.conditionId, legAUsd + legBUsd);
+        remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
+        lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
+        result.copiedTrades.push({
+          title: signal.title,
+          outcome: outcomeA.outcome,
+          side: `PAPER BUY (${signal.coin} pair)`,
+          amountUsd: legAUsd,
+          price: outcomeA.price,
+          asset: outcomeA.asset,
+          timestamp: Date.now(),
+        });
+        result.copiedTrades.push({
+          title: signal.title,
+          outcome: outcomeB.outcome,
+          side: `PAPER BUY (${signal.coin} pair)`,
+          amountUsd: legBUsd,
+          price: outcomeB.price,
+          asset: outcomeB.asset,
+          timestamp: Date.now(),
+        });
+        continue;
+      }
+
+      if (!client) {
+        result.failed++;
+        reject("missing_clob_client_live");
+        result.error = clipError(result.error, "Missing CLOB client in live mode");
+        break;
+      }
+
+      const recordLivePair = () => {
+        copiedSet.add(signalKey);
+        result.copied++;
+        result.executedEdgeCentsSum += signal.edge * 100;
+        result.executedNetEdgeCentsSum += netEdgeCents;
+        bumpBreakdown(result.executedBreakdown, signal);
+        addConditionExposure(signal.conditionId, legAUsd + legBUsd);
+        remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
+        lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
+        result.copiedTrades.push({
+          title: signal.title,
+          outcome: outcomeA.outcome,
+          side: `BUY (${signal.coin} pair)`,
+          amountUsd: legAUsd,
+          price: outcomeA.price,
+          asset: outcomeA.asset,
+          timestamp: Date.now(),
+        });
+        result.copiedTrades.push({
+          title: signal.title,
+          outcome: outcomeB.outcome,
+          side: `BUY (${signal.coin} pair)`,
+          amountUsd: legBUsd,
+          price: outcomeB.price,
+          asset: outcomeB.asset,
+          timestamp: Date.now(),
+        });
+      };
+
+      const placeBuyLeg = async (
+        tokenID: string,
+        amountUsd: number,
+        quotePrice: number
+      ): Promise<{ ok: boolean; error: string }> => {
+        try {
+          const buyPrice = Math.max(
+            0.001,
+            Math.min(0.999, quotePrice + liveBuyPriceBuffer)
+          );
+          const resp = await client.createAndPostMarketOrder(
+            {
+              tokenID,
+              amount: amountUsd,
+              side: Side.BUY,
+              orderType: OrderType.FOK,
+              price: buyPrice,
+            },
+            undefined,
+            OrderType.FOK
+          );
+          if (responseOk(resp)) return { ok: true, error: "" };
+          return { ok: false, error: responseError(resp, "BUY leg rejected") };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      };
+
+      const placeUnwindSell = async (
+        tokenID: string,
+        shareAmount: number,
+        minPrice: number
+      ): Promise<{ ok: boolean; error: string }> => {
+        try {
+          const resp = await client.createAndPostMarketOrder(
+            {
+              tokenID,
+              amount: shareAmount,
+              side: Side.SELL,
+              price: Math.max(0.01, Math.min(0.99, minPrice)),
+              orderType: OrderType.FOK,
+            },
+            undefined,
+            OrderType.FOK
+          );
+          if (responseOk(resp)) return { ok: true, error: "" };
+          return { ok: false, error: responseError(resp, "Unwind sell rejected") };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      };
+
+      const legA = await placeBuyLeg(outcomeA.asset, legAUsd, outcomeA.price);
+      if (!legA.ok) {
+        result.failed++;
+        reject("live_leg_a_rejected");
+        result.error = clipError(result.error, legA.error || "Leg A rejected");
+        break;
+      }
+
+      const legB = await placeBuyLeg(outcomeB.asset, legBUsd, outcomeB.price);
+      if (legB.ok) {
+        recordLivePair();
+        continue;
+      }
+
+      reject("live_partial_fill_detected");
+      const retryB = await placeBuyLeg(outcomeB.asset, legBUsd, outcomeB.price);
+      if (retryB.ok) {
+        reject("live_partial_recovered_leg_b_retry");
+        recordLivePair();
+        continue;
+      }
+
+      let unwindShareAmount =
+        (legAUsd / Math.max(0.001, outcomeA.price)) * unwindShareBuffer;
+      try {
+        const positions = await getPositions(myAddress, 200);
+        const legAPosition = positions.find(
+          (p) => !p.redeemable && p.asset === outcomeA.asset && Number(p.size) > 0
+        );
+        if (legAPosition) {
+          // Use the current held shares for unwind sizing to avoid oversell rejections.
+          unwindShareAmount = Math.max(
+            0.001,
+            Number(legAPosition.size) * unwindShareBuffer
+          );
+        } else {
+          reject("live_partial_unwind_position_not_found");
+        }
+      } catch {
+        reject("live_partial_unwind_position_lookup_failed");
+      }
+      const unwindMinPrice = Math.max(0.01, outcomeA.price - unwindSellSlippage);
+      const unwind = await placeUnwindSell(
+        outcomeA.asset,
+        Math.max(0.001, unwindShareAmount),
+        unwindMinPrice
+      );
+      if (unwind.ok) {
+        result.failed++;
+        reject("live_partial_unwound_leg_a");
+        result.error = clipError(
+          result.error,
+          `Leg B failed and retry failed (${legB.error}; ${retryB.error}); unwind of leg A succeeded`
+        );
+        break;
+      }
+
+      unresolvedImbalances++;
       result.failed++;
-      reject("live_partial_unwound_leg_a");
+      reject("live_partial_unwind_failed");
+      if (!result.unresolvedExposureAssets.includes(outcomeA.asset)) {
+        result.unresolvedExposureAssets.push(outcomeA.asset);
+      }
       result.error = clipError(
         result.error,
-        `Leg B failed and retry failed (${legB.error}; ${retryB.error}); unwind of leg A succeeded`
+        `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${maxUnresolvedImbalancesPerRun}): leg B failed (${legB.error}); retry failed (${retryB.error}); unwind failed (${unwind.error})`
       );
-      continue;
-    }
-
-    unresolvedImbalances++;
-    result.failed++;
-    reject("live_partial_unwind_failed");
-    if (!result.unresolvedExposureAssets.includes(outcomeA.asset)) {
-      result.unresolvedExposureAssets.push(outcomeA.asset);
-    }
-    result.error = clipError(
-      result.error,
-      `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${maxUnresolvedImbalancesPerRun}): leg B failed (${legB.error}); retry failed (${retryB.error}); unwind failed (${unwind.error})`
-    );
-    if (unresolvedImbalances >= maxUnresolvedImbalancesPerRun) {
-      reject("circuit_breaker_unresolved_imbalance");
-      result.error = clipError(result.error, "Circuit breaker tripped due to unresolved imbalance");
+      if (unresolvedImbalances >= maxUnresolvedImbalancesPerRun) {
+        reject("circuit_breaker_unresolved_imbalance");
+        result.error = clipError(result.error, "Circuit breaker tripped due to unresolved imbalance");
+        break signalsLoop;
+      }
       break;
     }
   }

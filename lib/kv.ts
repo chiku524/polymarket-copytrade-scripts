@@ -214,6 +214,10 @@ export interface CopyTraderConfig {
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
   pairMaxMarketsPerRun: number;
+  /** Max entries allowed for the same signal snapshot in a run (>=1) */
+  reentryMaxEntriesPerSignal: number;
+  /** Net-edge step (cents) required for each additional same-signal entry */
+  reentryEdgeStepCents: number;
   /** Max exposure per condition within a run (0 = disabled) */
   maxConditionExposureUsd: number;
   /** Include BTC Up/Down markets in strategy */
@@ -383,6 +387,8 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairSlippageCents: 0.05,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
+  reentryMaxEntriesPerSignal: 2,
+  reentryEdgeStepCents: 0.15,
   maxConditionExposureUsd: 0,
   enableBtc: true,
   enableEth: true,
@@ -602,6 +608,18 @@ function sanitizeConfig(
       1,
       20
     ),
+    reentryMaxEntriesPerSignal: clamp(
+      Math.floor(
+        toFiniteNumber(raw.reentryMaxEntriesPerSignal, current.reentryMaxEntriesPerSignal)
+      ),
+      1,
+      6
+    ),
+    reentryEdgeStepCents: clamp(
+      toFiniteNumber(raw.reentryEdgeStepCents, current.reentryEdgeStepCents),
+      0.01,
+      10
+    ),
     maxConditionExposureUsd: clamp(
       toFiniteNumber(raw.maxConditionExposureUsd, current.maxConditionExposureUsd),
       0,
@@ -721,6 +739,16 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:
       c.pairMaxMarketsPerRun ?? c.maxSignalsPerRun ?? DEFAULT_CONFIG.pairMaxMarketsPerRun,
+    reentryMaxEntriesPerSignal:
+      c.reentryMaxEntriesPerSignal ??
+      c.maxEntriesPerSignal ??
+      c.reentrySlotsPerSignal ??
+      DEFAULT_CONFIG.reentryMaxEntriesPerSignal,
+    reentryEdgeStepCents:
+      c.reentryEdgeStepCents ??
+      c.reentryStepCents ??
+      c.reentryMinEdgeStepCents ??
+      DEFAULT_CONFIG.reentryEdgeStepCents,
     maxConditionExposureUsd:
       c.maxConditionExposureUsd ??
       c.maxConditionNotionalUsd ??
