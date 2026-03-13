@@ -746,7 +746,7 @@ export async function runPairedStrategy(
       30,
       Math.min(lookbackSeconds, cadenceMaxSignalAgeSec[signal.cadence] ?? lookbackSeconds)
     );
-    const signalAgeSec = Math.max(0, nowSec - signal.latestTimestamp);
+    const signalAgeSec = Math.max(0, Math.floor(Date.now() / 1000) - signal.latestTimestamp);
     if (signalAgeSec > maxSignalAgeSec) {
       reject(`signal_stale_${signal.cadence}`);
       continue;
@@ -787,6 +787,7 @@ export async function runPairedStrategy(
       1,
       Math.min(reentryMaxEntriesPerSignal, 1 + extraEntriesByEdge)
     );
+    const maxExecutionQuoteAgeSec = Math.max(20, Math.floor(maxSignalAgeSec * 0.7));
     let acceptedEntryForSignal = false;
     for (let entryIndex = 0; entryIndex < maxEntriesForSignal; entryIndex++) {
       if (result.eligibleSignals >= maxMarketsPerRun) {
@@ -796,6 +797,11 @@ export async function runPairedStrategy(
       if (remainingBudgetUsd < (mode === "live" ? 2 : 0.2)) {
         reject("insufficient_remaining_budget");
         break signalsLoop;
+      }
+      const quoteAgeSec = Math.max(0, Math.floor(Date.now() / 1000) - signal.latestTimestamp);
+      if (quoteAgeSec > maxExecutionQuoteAgeSec) {
+        reject(`quote_stale_before_execution_${signal.cadence}`);
+        break;
       }
 
       const conditionExposureRemaining =
