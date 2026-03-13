@@ -90,11 +90,26 @@ interface Config {
   pairFeeBps: number;
   pairSlippageCents: number;
   liveMinNetEdgeSurplusCents: number;
+  adaptiveEdgeEnabled: boolean;
+  adaptiveEdgeLowActivityTradeCount: number;
+  adaptiveEdgeMaxPenaltyCents: number;
+  adaptiveEdgeStalePenaltyCents: number;
+  dynamicSizingEnabled: boolean;
+  dynamicSizingMinScalePct: number;
+  dynamicSizingMaxScalePct: number;
+  dynamicSizingEdgeTargetCents: number;
+  dynamicSizingLiquidityTradeCount: number;
   pairLookbackSeconds: number;
   pairMaxMarketsPerRun: number;
   reentryMaxEntriesPerSignal: number;
   reentryEdgeStepCents: number;
   maxConditionExposureUsd: number;
+  maxCoinExposureSharePct: number;
+  maxCadenceExposureSharePct: number;
+  autoExitResidualPositions: boolean;
+  residualPositionMinUsd: number;
+  residualPositionMaxPerRun: number;
+  residualPositionSellDiscountCents: number;
   enableBtc: boolean;
   enableEth: boolean;
   enableCadence5m: boolean;
@@ -133,6 +148,21 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   pairFeeBps: 2,
   pairSlippageCents: 0.05,
   liveMinNetEdgeSurplusCents: 0.05,
+  adaptiveEdgeEnabled: true,
+  adaptiveEdgeLowActivityTradeCount: 8,
+  adaptiveEdgeMaxPenaltyCents: 0.2,
+  adaptiveEdgeStalePenaltyCents: 0.2,
+  dynamicSizingEnabled: true,
+  dynamicSizingMinScalePct: 80,
+  dynamicSizingMaxScalePct: 150,
+  dynamicSizingEdgeTargetCents: 1,
+  dynamicSizingLiquidityTradeCount: 12,
+  maxCoinExposureSharePct: 0,
+  maxCadenceExposureSharePct: 0,
+  autoExitResidualPositions: false,
+  residualPositionMinUsd: 1,
+  residualPositionMaxPerRun: 2,
+  residualPositionSellDiscountCents: 3,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -157,11 +187,26 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   pairFeeBps: 2,
   pairSlippageCents: 0.05,
   liveMinNetEdgeSurplusCents: 0.1,
+  adaptiveEdgeEnabled: true,
+  adaptiveEdgeLowActivityTradeCount: 8,
+  adaptiveEdgeMaxPenaltyCents: 0.2,
+  adaptiveEdgeStalePenaltyCents: 0.2,
+  dynamicSizingEnabled: true,
+  dynamicSizingMinScalePct: 70,
+  dynamicSizingMaxScalePct: 140,
+  dynamicSizingEdgeTargetCents: 1,
+  dynamicSizingLiquidityTradeCount: 12,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
   reentryMaxEntriesPerSignal: 2,
   reentryEdgeStepCents: 0.15,
   maxConditionExposureUsd: 0,
+  maxCoinExposureSharePct: 0,
+  maxCadenceExposureSharePct: 0,
+  autoExitResidualPositions: false,
+  residualPositionMinUsd: 1,
+  residualPositionMaxPerRun: 2,
+  residualPositionSellDiscountCents: 3,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -582,11 +627,26 @@ export default function Home() {
         pairFeeBps: 2,
         pairSlippageCents: 0.05,
         liveMinNetEdgeSurplusCents: 0.1,
+        adaptiveEdgeEnabled: true,
+        adaptiveEdgeLowActivityTradeCount: 8,
+        adaptiveEdgeMaxPenaltyCents: 0.2,
+        adaptiveEdgeStalePenaltyCents: 0.2,
+        dynamicSizingEnabled: true,
+        dynamicSizingMinScalePct: 70,
+        dynamicSizingMaxScalePct: 140,
+        dynamicSizingEdgeTargetCents: 1,
+        dynamicSizingLiquidityTradeCount: 12,
         pairLookbackSeconds: 120,
         pairMaxMarketsPerRun: 4,
         reentryMaxEntriesPerSignal: 2,
         reentryEdgeStepCents: 0.15,
         maxConditionExposureUsd: 0,
+        maxCoinExposureSharePct: 0,
+        maxCadenceExposureSharePct: 0,
+        autoExitResidualPositions: false,
+        residualPositionMinUsd: 1,
+        residualPositionMaxPerRun: 2,
+        residualPositionSellDiscountCents: 3,
         enableBtc: true,
         enableEth: true,
         enableCadence5m: true,
@@ -655,11 +715,26 @@ export default function Home() {
     pairFeeBps: 2,
     pairSlippageCents: 0.05,
     liveMinNetEdgeSurplusCents: 0.1,
+    adaptiveEdgeEnabled: true,
+    adaptiveEdgeLowActivityTradeCount: 8,
+    adaptiveEdgeMaxPenaltyCents: 0.2,
+    adaptiveEdgeStalePenaltyCents: 0.2,
+    dynamicSizingEnabled: true,
+    dynamicSizingMinScalePct: 70,
+    dynamicSizingMaxScalePct: 140,
+    dynamicSizingEdgeTargetCents: 1,
+    dynamicSizingLiquidityTradeCount: 12,
     pairLookbackSeconds: 120,
     pairMaxMarketsPerRun: 4,
     reentryMaxEntriesPerSignal: 2,
     reentryEdgeStepCents: 0.15,
     maxConditionExposureUsd: 0,
+    maxCoinExposureSharePct: 0,
+    maxCadenceExposureSharePct: 0,
+    autoExitResidualPositions: false,
+    residualPositionMinUsd: 1,
+    residualPositionMaxPerRun: 2,
+    residualPositionSellDiscountCents: 3,
     enableBtc: true,
     enableEth: true,
     enableCadence5m: true,
@@ -845,6 +920,12 @@ export default function Home() {
     .join(", ") || "None";
   const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
   const edgeQualitySummary = `fee ${cfg.pairFeeBps.toFixed(1)} bps · slippage ${cfg.pairSlippageCents.toFixed(2)}¢/leg · live surplus ${cfg.liveMinNetEdgeSurplusCents.toFixed(2)}¢+`;
+  const adaptiveSummary = cfg.adaptiveEdgeEnabled
+    ? `adaptive edge on (${cfg.adaptiveEdgeMaxPenaltyCents.toFixed(2)}¢ liq · ${cfg.adaptiveEdgeStalePenaltyCents.toFixed(2)}¢ stale)`
+    : "adaptive edge off";
+  const dynamicSizingSummary = cfg.dynamicSizingEnabled
+    ? `dynamic size ${cfg.dynamicSizingMinScalePct.toFixed(0)}-${cfg.dynamicSizingMaxScalePct.toFixed(0)}%`
+    : "dynamic size off";
   const guardrailSummary = `max imbalances ${cfg.maxUnresolvedImbalancesPerRun} · unwind slippage ${cfg.unwindSellSlippageCents.toFixed(1)}¢ · unwind buffer ${cfg.unwindShareBufferPct.toFixed(0)}%`;
   const dailyCapSummary = `notional cap ${
     cfg.maxDailyLiveNotionalUsd > 0 ? `$${cfg.maxDailyLiveNotionalUsd.toFixed(0)}` : "off"
@@ -865,6 +946,13 @@ export default function Home() {
     cfg.maxConditionExposureUsd > 0
       ? `$${cfg.maxConditionExposureUsd.toFixed(2)} / condition`
       : "condition cap off";
+  const concentrationSummary =
+    cfg.maxCoinExposureSharePct > 0 || cfg.maxCadenceExposureSharePct > 0
+      ? `coin cap ${cfg.maxCoinExposureSharePct.toFixed(0)}% · cadence cap ${cfg.maxCadenceExposureSharePct.toFixed(0)}%`
+      : "concentration caps off";
+  const lifecycleSummary = cfg.autoExitResidualPositions
+    ? `residual exits on ($${cfg.residualPositionMinUsd.toFixed(2)}+ / ${cfg.residualPositionMaxPerRun} max)`
+    : "residual exits off";
   const reentrySummary =
     cfg.reentryMaxEntriesPerSignal > 1
       ? `${cfg.reentryMaxEntriesPerSignal}x/signal @ ${cfg.reentryEdgeStepCents.toFixed(2)}¢ step`
@@ -1167,7 +1255,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {reentrySummary} · {edgeQualitySummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
+                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {adaptiveSummary} · {dynamicSizingSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1460,6 +1548,317 @@ export default function Home() {
                 disabled={saving}
                 className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
+            </div>
+            <div className="col-span-2 sm:col-span-3 lg:col-span-4 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase mb-2">Adaptive thresholding & dynamic sizing</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  role="switch"
+                  aria-checked={cfg.adaptiveEdgeEnabled}
+                  onClick={() => updateConfig({ adaptiveEdgeEnabled: !cfg.adaptiveEdgeEnabled }, true)}
+                  disabled={saving}
+                  className={`
+                    relative w-11 h-6 rounded-full transition-colors flex-shrink-0
+                    ${cfg.adaptiveEdgeEnabled ? "bg-emerald-500" : "bg-zinc-700"}
+                    ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                  `}
+                >
+                  <span
+                    className={`
+                      absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform
+                      ${cfg.adaptiveEdgeEnabled ? "left-6 translate-x-[-2px]" : "left-1"}
+                    `}
+                  />
+                </button>
+                <p className="text-xs text-zinc-300 mr-3">Adaptive edge</p>
+                <button
+                  role="switch"
+                  aria-checked={cfg.dynamicSizingEnabled}
+                  onClick={() => updateConfig({ dynamicSizingEnabled: !cfg.dynamicSizingEnabled }, true)}
+                  disabled={saving}
+                  className={`
+                    relative w-11 h-6 rounded-full transition-colors flex-shrink-0
+                    ${cfg.dynamicSizingEnabled ? "bg-sky-500" : "bg-zinc-700"}
+                    ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                  `}
+                >
+                  <span
+                    className={`
+                      absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform
+                      ${cfg.dynamicSizingEnabled ? "left-6 translate-x-[-2px]" : "left-1"}
+                    `}
+                  />
+                </button>
+                <p className="text-xs text-zinc-300 mr-3">Dynamic sizing</p>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Low-activity trades</p>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    step={1}
+                    value={cfg.adaptiveEdgeLowActivityTradeCount}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "adaptiveEdgeLowActivityTradeCount",
+                        parseInt(e.target.value, 10) || 1,
+                        1,
+                        200
+                      )
+                    }
+                    disabled={saving}
+                    className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Adaptive liq penalty (¢)</p>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.01}
+                    value={cfg.adaptiveEdgeMaxPenaltyCents}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "adaptiveEdgeMaxPenaltyCents",
+                        parseFloat(e.target.value) || 0,
+                        0,
+                        10
+                      )
+                    }
+                    disabled={saving}
+                    className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Adaptive stale penalty (¢)</p>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.01}
+                    value={cfg.adaptiveEdgeStalePenaltyCents}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "adaptiveEdgeStalePenaltyCents",
+                        parseFloat(e.target.value) || 0,
+                        0,
+                        10
+                      )
+                    }
+                    disabled={saving}
+                    className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Size min/max (%)</p>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={10}
+                      max={200}
+                      step={1}
+                      value={cfg.dynamicSizingMinScalePct}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "dynamicSizingMinScalePct",
+                          parseInt(e.target.value, 10) || 10,
+                          10,
+                          200
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={20}
+                      max={300}
+                      step={1}
+                      value={cfg.dynamicSizingMaxScalePct}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "dynamicSizingMaxScalePct",
+                          parseInt(e.target.value, 10) || 20,
+                          20,
+                          300
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Size edge target (¢)</p>
+                  <input
+                    type="number"
+                    min={0.05}
+                    max={20}
+                    step={0.05}
+                    value={cfg.dynamicSizingEdgeTargetCents}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "dynamicSizingEdgeTargetCents",
+                        parseFloat(e.target.value) || 0.05,
+                        0.05,
+                        20
+                      )
+                    }
+                    disabled={saving}
+                    className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Size liquidity trades</p>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    step={1}
+                    value={cfg.dynamicSizingLiquidityTradeCount}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "dynamicSizingLiquidityTradeCount",
+                        parseInt(e.target.value, 10) || 1,
+                        1,
+                        200
+                      )
+                    }
+                    disabled={saving}
+                    className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="col-span-2 sm:col-span-3 lg:col-span-4 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase mb-2">Concentration & lifecycle exits</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Coin cap (%)</p>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={cfg.maxCoinExposureSharePct || ""}
+                    placeholder="0 = off"
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "maxCoinExposureSharePct",
+                        parseFloat(e.target.value) || 0,
+                        0,
+                        100
+                      )
+                    }
+                    disabled={saving}
+                    className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Cadence cap (%)</p>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={cfg.maxCadenceExposureSharePct || ""}
+                    placeholder="0 = off"
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "maxCadenceExposureSharePct",
+                        parseFloat(e.target.value) || 0,
+                        0,
+                        100
+                      )
+                    }
+                    disabled={saving}
+                    className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+                  />
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={cfg.autoExitResidualPositions}
+                  onClick={() =>
+                    updateConfig({ autoExitResidualPositions: !cfg.autoExitResidualPositions }, true)
+                  }
+                  disabled={saving}
+                  className={`
+                    relative w-11 h-6 rounded-full transition-colors flex-shrink-0
+                    ${cfg.autoExitResidualPositions ? "bg-amber-500" : "bg-zinc-700"}
+                    ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                  `}
+                >
+                  <span
+                    className={`
+                      absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform
+                      ${cfg.autoExitResidualPositions ? "left-6 translate-x-[-2px]" : "left-1"}
+                    `}
+                  />
+                </button>
+                <p className="text-xs text-zinc-300 mr-2">Auto residual exits</p>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Residual min ($)</p>
+                  <input
+                    type="number"
+                    min={0.1}
+                    max={10000}
+                    step={0.1}
+                    value={cfg.residualPositionMinUsd}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "residualPositionMinUsd",
+                        parseFloat(e.target.value) || 0.1,
+                        0.1,
+                        10000
+                      )
+                    }
+                    disabled={saving}
+                    className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Residual max/run</p>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    step={1}
+                    value={cfg.residualPositionMaxPerRun}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "residualPositionMaxPerRun",
+                        parseInt(e.target.value, 10) || 1,
+                        1,
+                        20
+                      )
+                    }
+                    disabled={saving}
+                    className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Residual sell discount (¢)</p>
+                  <input
+                    type="number"
+                    min={0}
+                    max={25}
+                    step={0.1}
+                    value={cfg.residualPositionSellDiscountCents}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "residualPositionSellDiscountCents",
+                        parseFloat(e.target.value) || 0,
+                        0,
+                        25
+                      )
+                    }
+                    disabled={saving}
+                    className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+              </div>
             </div>
             <div className="col-span-2 sm:col-span-3 lg:col-span-4 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
               <p className="text-[11px] text-zinc-500 uppercase mb-2">Paper-only edge override</p>

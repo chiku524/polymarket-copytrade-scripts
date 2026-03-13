@@ -212,6 +212,24 @@ export interface CopyTraderConfig {
   pairSlippageCents: number;
   /** Live-only minimum net-edge surplus above threshold before entry */
   liveMinNetEdgeSurplusCents: number;
+  /** Enable adaptive edge thresholds based on freshness + activity */
+  adaptiveEdgeEnabled: boolean;
+  /** Trade-count target used by adaptive activity penalty */
+  adaptiveEdgeLowActivityTradeCount: number;
+  /** Maximum adaptive penalty for low-activity signals (cents) */
+  adaptiveEdgeMaxPenaltyCents: number;
+  /** Maximum adaptive penalty for staler signals (cents) */
+  adaptiveEdgeStalePenaltyCents: number;
+  /** Enable dynamic pair sizing by edge/activity quality */
+  dynamicSizingEnabled: boolean;
+  /** Minimum dynamic sizing scale (percent of pair chunk) */
+  dynamicSizingMinScalePct: number;
+  /** Maximum dynamic sizing scale (percent of pair chunk) */
+  dynamicSizingMaxScalePct: number;
+  /** Net-edge surplus target (cents) for dynamic sizing to hit max scale */
+  dynamicSizingEdgeTargetCents: number;
+  /** Trade-count target used for dynamic sizing liquidity scaling */
+  dynamicSizingLiquidityTradeCount: number;
   /** Recency window for global market signal discovery */
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
@@ -222,6 +240,18 @@ export interface CopyTraderConfig {
   reentryEdgeStepCents: number;
   /** Max exposure per condition within a run (0 = disabled) */
   maxConditionExposureUsd: number;
+  /** Max share of run budget allocated to one coin (0 = disabled) */
+  maxCoinExposureSharePct: number;
+  /** Max share of run budget allocated to one cadence bucket (0 = disabled) */
+  maxCadenceExposureSharePct: number;
+  /** Enable residual position lifecycle exits before new entries (live only) */
+  autoExitResidualPositions: boolean;
+  /** Minimum residual position value to attempt auto-exit */
+  residualPositionMinUsd: number;
+  /** Max residual positions to auto-exit per run */
+  residualPositionMaxPerRun: number;
+  /** SELL price discount from current price for residual exits (cents) */
+  residualPositionSellDiscountCents: number;
   /** Include BTC Up/Down markets in strategy */
   enableBtc: boolean;
   /** Include ETH Up/Down markets in strategy */
@@ -388,11 +418,26 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairFeeBps: 2,
   pairSlippageCents: 0.05,
   liveMinNetEdgeSurplusCents: 0.1,
+  adaptiveEdgeEnabled: true,
+  adaptiveEdgeLowActivityTradeCount: 8,
+  adaptiveEdgeMaxPenaltyCents: 0.2,
+  adaptiveEdgeStalePenaltyCents: 0.2,
+  dynamicSizingEnabled: true,
+  dynamicSizingMinScalePct: 70,
+  dynamicSizingMaxScalePct: 140,
+  dynamicSizingEdgeTargetCents: 1,
+  dynamicSizingLiquidityTradeCount: 12,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
   reentryMaxEntriesPerSignal: 2,
   reentryEdgeStepCents: 0.15,
   maxConditionExposureUsd: 0,
+  maxCoinExposureSharePct: 0,
+  maxCadenceExposureSharePct: 0,
+  autoExitResidualPositions: false,
+  residualPositionMinUsd: 1,
+  residualPositionMaxPerRun: 2,
+  residualPositionSellDiscountCents: 3,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -606,6 +651,47 @@ function sanitizeConfig(
       0,
       10
     ),
+    adaptiveEdgeEnabled: raw.adaptiveEdgeEnabled !== false,
+    adaptiveEdgeLowActivityTradeCount: clamp(
+      Math.floor(
+        toFiniteNumber(raw.adaptiveEdgeLowActivityTradeCount, current.adaptiveEdgeLowActivityTradeCount)
+      ),
+      1,
+      200
+    ),
+    adaptiveEdgeMaxPenaltyCents: clamp(
+      toFiniteNumber(raw.adaptiveEdgeMaxPenaltyCents, current.adaptiveEdgeMaxPenaltyCents),
+      0,
+      10
+    ),
+    adaptiveEdgeStalePenaltyCents: clamp(
+      toFiniteNumber(raw.adaptiveEdgeStalePenaltyCents, current.adaptiveEdgeStalePenaltyCents),
+      0,
+      10
+    ),
+    dynamicSizingEnabled: raw.dynamicSizingEnabled !== false,
+    dynamicSizingMinScalePct: clamp(
+      toFiniteNumber(raw.dynamicSizingMinScalePct, current.dynamicSizingMinScalePct),
+      10,
+      200
+    ),
+    dynamicSizingMaxScalePct: clamp(
+      toFiniteNumber(raw.dynamicSizingMaxScalePct, current.dynamicSizingMaxScalePct),
+      20,
+      300
+    ),
+    dynamicSizingEdgeTargetCents: clamp(
+      toFiniteNumber(raw.dynamicSizingEdgeTargetCents, current.dynamicSizingEdgeTargetCents),
+      0.05,
+      20
+    ),
+    dynamicSizingLiquidityTradeCount: clamp(
+      Math.floor(
+        toFiniteNumber(raw.dynamicSizingLiquidityTradeCount, current.dynamicSizingLiquidityTradeCount)
+      ),
+      1,
+      200
+    ),
     pairLookbackSeconds: clamp(
       toFiniteNumber(raw.pairLookbackSeconds, current.pairLookbackSeconds),
       20,
@@ -632,6 +718,32 @@ function sanitizeConfig(
       toFiniteNumber(raw.maxConditionExposureUsd, current.maxConditionExposureUsd),
       0,
       10000000
+    ),
+    maxCoinExposureSharePct: clamp(
+      toFiniteNumber(raw.maxCoinExposureSharePct, current.maxCoinExposureSharePct),
+      0,
+      100
+    ),
+    maxCadenceExposureSharePct: clamp(
+      toFiniteNumber(raw.maxCadenceExposureSharePct, current.maxCadenceExposureSharePct),
+      0,
+      100
+    ),
+    autoExitResidualPositions: raw.autoExitResidualPositions === true,
+    residualPositionMinUsd: clamp(
+      toFiniteNumber(raw.residualPositionMinUsd, current.residualPositionMinUsd),
+      0.1,
+      10000
+    ),
+    residualPositionMaxPerRun: clamp(
+      Math.floor(toFiniteNumber(raw.residualPositionMaxPerRun, current.residualPositionMaxPerRun)),
+      1,
+      20
+    ),
+    residualPositionSellDiscountCents: clamp(
+      toFiniteNumber(raw.residualPositionSellDiscountCents, current.residualPositionSellDiscountCents),
+      0,
+      25
     ),
     enableBtc: raw.enableBtc !== false,
     enableEth: raw.enableEth !== false,
@@ -748,6 +860,38 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.liveMinEdgeSurplusCents ??
       c.liveNetEdgeSurplusMinCents ??
       DEFAULT_CONFIG.liveMinNetEdgeSurplusCents,
+    adaptiveEdgeEnabled: c.adaptiveEdgeEnabled,
+    adaptiveEdgeLowActivityTradeCount:
+      c.adaptiveEdgeLowActivityTradeCount ??
+      c.adaptiveEdgeMinTradeCount ??
+      c.adaptiveLowActivityTradeCount ??
+      DEFAULT_CONFIG.adaptiveEdgeLowActivityTradeCount,
+    adaptiveEdgeMaxPenaltyCents:
+      c.adaptiveEdgeMaxPenaltyCents ??
+      c.adaptiveEdgePenaltyCents ??
+      c.adaptiveLowLiquidityPenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeMaxPenaltyCents,
+    adaptiveEdgeStalePenaltyCents:
+      c.adaptiveEdgeStalePenaltyCents ??
+      c.adaptiveStalePenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCents,
+    dynamicSizingEnabled: c.dynamicSizingEnabled,
+    dynamicSizingMinScalePct:
+      c.dynamicSizingMinScalePct ??
+      c.dynamicSizeMinPct ??
+      DEFAULT_CONFIG.dynamicSizingMinScalePct,
+    dynamicSizingMaxScalePct:
+      c.dynamicSizingMaxScalePct ??
+      c.dynamicSizeMaxPct ??
+      DEFAULT_CONFIG.dynamicSizingMaxScalePct,
+    dynamicSizingEdgeTargetCents:
+      c.dynamicSizingEdgeTargetCents ??
+      c.dynamicSizingTargetEdgeCents ??
+      DEFAULT_CONFIG.dynamicSizingEdgeTargetCents,
+    dynamicSizingLiquidityTradeCount:
+      c.dynamicSizingLiquidityTradeCount ??
+      c.dynamicSizingLiquidityTargetTrades ??
+      DEFAULT_CONFIG.dynamicSizingLiquidityTradeCount,
     pairLookbackSeconds:
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:
@@ -767,6 +911,33 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.maxConditionNotionalUsd ??
       c.maxPerConditionUsd ??
       DEFAULT_CONFIG.maxConditionExposureUsd,
+    maxCoinExposureSharePct:
+      c.maxCoinExposureSharePct ??
+      c.maxCoinBudgetSharePct ??
+      c.maxCoinSharePct ??
+      DEFAULT_CONFIG.maxCoinExposureSharePct,
+    maxCadenceExposureSharePct:
+      c.maxCadenceExposureSharePct ??
+      c.maxCadenceBudgetSharePct ??
+      c.maxCadenceSharePct ??
+      DEFAULT_CONFIG.maxCadenceExposureSharePct,
+    autoExitResidualPositions:
+      c.autoExitResidualPositions ??
+      c.enableAutoResidualExit ??
+      c.autoResidualExit ??
+      DEFAULT_CONFIG.autoExitResidualPositions,
+    residualPositionMinUsd:
+      c.residualPositionMinUsd ??
+      c.autoResidualExitMinUsd ??
+      DEFAULT_CONFIG.residualPositionMinUsd,
+    residualPositionMaxPerRun:
+      c.residualPositionMaxPerRun ??
+      c.autoResidualExitMaxPerRun ??
+      DEFAULT_CONFIG.residualPositionMaxPerRun,
+    residualPositionSellDiscountCents:
+      c.residualPositionSellDiscountCents ??
+      c.autoResidualExitSellDiscountCents ??
+      DEFAULT_CONFIG.residualPositionSellDiscountCents,
     enableBtc: c.enableBtc,
     enableEth: c.enableEth,
     enableCadence5m: c.enableCadence5m,

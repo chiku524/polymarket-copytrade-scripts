@@ -22,6 +22,7 @@ interface GlobalTrade {
   slug?: string;
   asset: string;
   outcome: string;
+  size?: number | string;
   price: number | string;
   timestamp: number | string;
 }
@@ -42,6 +43,8 @@ interface PairSignal {
   latestTimestamp: number;
   pairSum: number;
   edge: number;
+  recentTradeCount: number;
+  recentNotionalUsd: number;
   outcomes: [OutcomeSnapshot, OutcomeSnapshot];
 }
 
@@ -53,6 +56,8 @@ export interface SignalBreakdown {
 interface TradeConditionSnapshot {
   latestTimestamp: number;
   byOutcome: Map<string, OutcomeSnapshot>;
+  recentTradeCount: number;
+  recentNotionalUsd: number;
   identityHint?: { coin: PairCoin; cadence: PairCadence };
 }
 
@@ -313,7 +318,12 @@ async function getRecentPairSignals(params: {
       }
     }
 
-    const bucket = grouped.get(conditionId) ?? { latestTimestamp: 0, byOutcome: new Map<string, OutcomeSnapshot>() };
+    const bucket = grouped.get(conditionId) ?? {
+      latestTimestamp: 0,
+      byOutcome: new Map<string, OutcomeSnapshot>(),
+      recentTradeCount: 0,
+      recentNotionalUsd: 0,
+    };
     const current = bucket.byOutcome.get(outcome);
     if (!current || ts > current.timestamp) {
       bucket.byOutcome.set(outcome, {
@@ -324,6 +334,9 @@ async function getRecentPairSignals(params: {
       });
     }
     bucket.latestTimestamp = Math.max(bucket.latestTimestamp, ts);
+    bucket.recentTradeCount += 1;
+    const tradeSize = Math.max(0, toNum(t.size));
+    bucket.recentNotionalUsd += tradeSize > 0 ? tradeSize * price : price;
     if (hintedIdentity) {
       bucket.identityHint = hintedIdentity;
     }
@@ -437,6 +450,8 @@ async function getRecentPairSignals(params: {
       latestTimestamp: Math.max(outcomes[0].timestamp, outcomes[1].timestamp),
       pairSum,
       edge,
+      recentTradeCount: groupedSnapshot.recentTradeCount,
+      recentNotionalUsd: groupedSnapshot.recentNotionalUsd,
       outcomes,
     });
   }
@@ -471,11 +486,26 @@ export async function runPairedStrategy(
     pairFeeBps: number;
     pairSlippageCents: number;
     liveMinNetEdgeSurplusCents: number;
+    adaptiveEdgeEnabled: boolean;
+    adaptiveEdgeLowActivityTradeCount: number;
+    adaptiveEdgeMaxPenaltyCents: number;
+    adaptiveEdgeStalePenaltyCents: number;
+    dynamicSizingEnabled: boolean;
+    dynamicSizingMinScalePct: number;
+    dynamicSizingMaxScalePct: number;
+    dynamicSizingEdgeTargetCents: number;
+    dynamicSizingLiquidityTradeCount: number;
     pairLookbackSeconds: number;
     pairMaxMarketsPerRun: number;
     reentryMaxEntriesPerSignal: number;
     reentryEdgeStepCents: number;
     maxConditionExposureUsd: number;
+    maxCoinExposureSharePct: number;
+    maxCadenceExposureSharePct: number;
+    autoExitResidualPositions: boolean;
+    residualPositionMinUsd: number;
+    residualPositionMaxPerRun: number;
+    residualPositionSellDiscountCents: number;
     enableBtc: boolean;
     enableEth: boolean;
     enableCadence5m: boolean;
@@ -570,6 +600,54 @@ export async function runPairedStrategy(
   const liveMinNetEdgeSurplusCents = Math.max(
     0,
     Math.min(10, Number(config.liveMinNetEdgeSurplusCents) || 0)
+  );
+  const adaptiveEdgeEnabled = config.adaptiveEdgeEnabled !== false;
+  const adaptiveEdgeLowActivityTradeCount = Math.max(
+    1,
+    Math.min(200, Math.floor(Number(config.adaptiveEdgeLowActivityTradeCount) || 1))
+  );
+  const adaptiveEdgeMaxPenaltyCents = Math.max(
+    0,
+    Math.min(10, Number(config.adaptiveEdgeMaxPenaltyCents) || 0)
+  );
+  const adaptiveEdgeStalePenaltyCents = Math.max(
+    0,
+    Math.min(10, Number(config.adaptiveEdgeStalePenaltyCents) || 0)
+  );
+  const dynamicSizingEnabled = config.dynamicSizingEnabled !== false;
+  const dynamicSizingMinScale = Math.max(
+    0.1,
+    Math.min(2, (Number(config.dynamicSizingMinScalePct) || 100) / 100)
+  );
+  const dynamicSizingMaxScale = Math.max(
+    dynamicSizingMinScale,
+    Math.min(3, (Number(config.dynamicSizingMaxScalePct) || 100) / 100)
+  );
+  const dynamicSizingEdgeTargetCents = Math.max(
+    0.05,
+    Math.min(20, Number(config.dynamicSizingEdgeTargetCents) || 1)
+  );
+  const dynamicSizingLiquidityTradeCount = Math.max(
+    1,
+    Math.min(200, Math.floor(Number(config.dynamicSizingLiquidityTradeCount) || 1))
+  );
+  const maxCoinExposureSharePct = Math.max(
+    0,
+    Math.min(100, Number(config.maxCoinExposureSharePct) || 0)
+  );
+  const maxCadenceExposureSharePct = Math.max(
+    0,
+    Math.min(100, Number(config.maxCadenceExposureSharePct) || 0)
+  );
+  const autoExitResidualPositions = config.autoExitResidualPositions === true;
+  const residualPositionMinUsd = Math.max(0.1, Number(config.residualPositionMinUsd) || 1);
+  const residualPositionMaxPerRun = Math.max(
+    1,
+    Math.min(20, Math.floor(Number(config.residualPositionMaxPerRun) || 1))
+  );
+  const residualPositionSellDiscount = Math.max(
+    0,
+    Math.min(0.25, (Number(config.residualPositionSellDiscountCents) || 0) / 100)
   );
   const liveBuyPriceBuffer = Math.max(
     MIN_LIVE_BUY_PRICE_BUFFER,
@@ -672,15 +750,103 @@ export async function runPairedStrategy(
       myAddress
     );
   }
+  if (mode === "live" && client && autoExitResidualPositions) {
+    try {
+      const positions = await getPositions(myAddress, 200);
+      const candidates = positions
+        .filter((p) => !p.redeemable && Number(p.size) > 0 && Number(p.currentValue) >= residualPositionMinUsd)
+        .map((p) => {
+          const identity = detectUpDownIdentity(String(p.title ?? ""), String(p.slug ?? ""));
+          return { p, identity };
+        })
+        .filter(
+          (x) =>
+            x.identity &&
+            ((x.identity.coin === "BTC" && includeBtc) || (x.identity.coin === "ETH" && includeEth)) &&
+            isCadenceEnabled(x.identity.cadence, { cadence5m, cadence15m, cadenceHourly })
+        )
+        .sort((a, b) => Number(b.p.currentValue) - Number(a.p.currentValue))
+        .slice(0, residualPositionMaxPerRun);
+
+      for (const { p } of candidates) {
+        result.rejectedReasons.residual_exit_attempted =
+          (result.rejectedReasons.residual_exit_attempted ?? 0) + 1;
+        const shareAmount = Math.max(0.001, Number(p.size) * unwindShareBuffer);
+        const minPrice = Math.max(
+          0.01,
+          Math.min(0.99, Number(p.curPrice) - residualPositionSellDiscount)
+        );
+        try {
+          const resp = await client.createAndPostMarketOrder(
+            {
+              tokenID: p.asset,
+              amount: shareAmount,
+              side: Side.SELL,
+              price: minPrice,
+              orderType: OrderType.FOK,
+            },
+            undefined,
+            OrderType.FOK
+          );
+          if (responseOk(resp)) {
+            result.rejectedReasons.residual_exit_filled =
+              (result.rejectedReasons.residual_exit_filled ?? 0) + 1;
+            result.copiedTrades.push({
+              title: p.title,
+              outcome: p.outcome,
+              side: "AUTO SELL (residual lifecycle)",
+              amountUsd: shareAmount * Math.max(0.01, Number(p.curPrice)),
+              price: Math.max(0.01, Number(p.curPrice)),
+              asset: p.asset,
+              timestamp: Date.now(),
+            });
+          } else {
+            result.rejectedReasons.residual_exit_failed =
+              (result.rejectedReasons.residual_exit_failed ?? 0) + 1;
+            result.error = clipError(
+              result.error,
+              `Residual exit failed for ${p.asset}: ${responseError(resp, "sell rejected")}`
+            );
+          }
+        } catch (e) {
+          result.rejectedReasons.residual_exit_failed =
+            (result.rejectedReasons.residual_exit_failed ?? 0) + 1;
+          const msg = e instanceof Error ? e.message : String(e);
+          result.error = clipError(result.error, `Residual exit exception for ${p.asset}: ${msg}`);
+        }
+      }
+    } catch (e) {
+      result.rejectedReasons.residual_exit_lookup_failed =
+        (result.rejectedReasons.residual_exit_lookup_failed ?? 0) + 1;
+      const msg = e instanceof Error ? e.message : String(e);
+      result.error = clipError(result.error, `Residual exit lookup failed: ${msg}`);
+    }
+  }
 
   let lastTimestamp = state.lastTimestamp;
   let unresolvedImbalances = 0;
   const conditionExposureUsd = new Map<string, number>();
+  const coinExposureUsd: Record<PairCoin, number> = { BTC: 0, ETH: 0 };
+  const cadenceExposureUsd: Record<PairCadence, number> = {
+    "5m": 0,
+    "15m": 0,
+    hourly: 0,
+    other: 0,
+  };
   const conditionExposureUsed = (conditionId: string): number =>
     Math.max(0, conditionExposureUsd.get(conditionId) ?? 0);
   const addConditionExposure = (conditionId: string, exposureUsd: number) => {
     if (exposureUsd <= 0) return;
     conditionExposureUsd.set(conditionId, conditionExposureUsed(conditionId) + exposureUsd);
+  };
+  const addSignalExposure = (signal: Pick<PairSignal, "conditionId" | "coin" | "cadence">, exposureUsd: number) => {
+    if (exposureUsd <= 0) return;
+    addConditionExposure(signal.conditionId, exposureUsd);
+    coinExposureUsd[signal.coin] = Math.max(0, (coinExposureUsd[signal.coin] ?? 0) + exposureUsd);
+    cadenceExposureUsd[signal.cadence] = Math.max(
+      0,
+      (cadenceExposureUsd[signal.cadence] ?? 0) + exposureUsd
+    );
   };
   const nowSec = Math.floor(Date.now() / 1000);
   const cadencePriorityWeight: Record<PairCadence, number> = {
@@ -714,23 +880,40 @@ export async function runPairedStrategy(
         paperMinEdgeOverride != null
           ? Math.min(signalMinEdge, paperMinEdgeOverride)
           : signalMinEdge;
-      const signalMinEdgeCents = effectiveMinEdge * 100;
+      const baseSignalMinEdgeCents = effectiveMinEdge * 100;
       const netEdgeCents = estimateNetEdgeCents({
         edge: signal.edge,
         pairSum: signal.pairSum,
         pairFeeBps,
         pairSlippageCents,
       });
-      const netSurplusCents = netEdgeCents - signalMinEdgeCents;
+      const activityRatio = Math.max(
+        0,
+        Math.min(1, signal.recentTradeCount / adaptiveEdgeLowActivityTradeCount)
+      );
       const freshness = freshnessDecayWeight(
         signal.latestTimestamp,
         nowSec,
         cadenceFreshnessHalfLifeSec[signal.cadence] ?? 300
       );
+      const adaptivePenaltyCents =
+        adaptiveEdgeEnabled
+          ? (1 - activityRatio) * adaptiveEdgeMaxPenaltyCents +
+            (1 - freshness) * adaptiveEdgeStalePenaltyCents
+          : 0;
+      const signalMinEdgeCents = baseSignalMinEdgeCents + adaptivePenaltyCents;
+      const netSurplusCents = netEdgeCents - signalMinEdgeCents;
       const cadenceWeight = cadencePriorityWeight[signal.cadence] ?? 1;
       // Cadence-aware ranking: prioritize surplus net edge, then freshness.
       const priorityScore = netSurplusCents * cadenceWeight + freshness * 0.25;
-      return { signal, netEdgeCents, signalMinEdgeCents, priorityScore };
+      return {
+        signal,
+        netEdgeCents,
+        signalMinEdgeCents,
+        baseSignalMinEdgeCents,
+        adaptivePenaltyCents,
+        priorityScore,
+      };
     })
     .sort((a, b) => {
       if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
@@ -747,6 +930,8 @@ export async function runPairedStrategy(
     const signal = rankedSignal.signal;
     const netEdgeCents = rankedSignal.netEdgeCents;
     const signalMinEdgeCents = rankedSignal.signalMinEdgeCents;
+    const baseSignalMinEdgeCents = rankedSignal.baseSignalMinEdgeCents;
+    const adaptivePenaltyCents = rankedSignal.adaptivePenaltyCents;
     const maxSignalAgeSec = Math.max(
       30,
       Math.min(lookbackSeconds, cadenceMaxSignalAgeSec[signal.cadence] ?? lookbackSeconds)
@@ -773,8 +958,11 @@ export async function runPairedStrategy(
     if (netEdgeCents < signalMinEdgeCents) {
       const baseReason =
         signal.cadence === "other" ? "edge_below_threshold" : `edge_below_threshold_${signal.cadence}`;
+      const adaptiveSuffix = adaptivePenaltyCents > 0.001 ? "_adaptive" : "";
       reject(
-        signal.edge * 100 >= signalMinEdgeCents ? `${baseReason}_after_costs` : baseReason
+        signal.edge * 100 >= baseSignalMinEdgeCents
+          ? `${baseReason}_after_costs${adaptiveSuffix}`
+          : `${baseReason}${adaptiveSuffix}`
       );
       continue;
     }
@@ -832,10 +1020,44 @@ export async function runPairedStrategy(
         continue;
       }
 
-      let pairSpend = Math.min(pairChunkUsd, remainingBudgetUsd, conditionExposureRemaining);
+      const dynamicSizingEdgeRatio = Math.max(
+        0,
+        Math.min(1, netEdgeSurplusCents / dynamicSizingEdgeTargetCents)
+      );
+      const dynamicSizingLiquidityRatio = Math.max(
+        0,
+        Math.min(1, signal.recentTradeCount / dynamicSizingLiquidityTradeCount)
+      );
+      const dynamicSizingScore = dynamicSizingEdgeRatio * 0.7 + dynamicSizingLiquidityRatio * 0.3;
+      const dynamicSizingScale = dynamicSizingEnabled
+        ? dynamicSizingMinScale + (dynamicSizingMaxScale - dynamicSizingMinScale) * dynamicSizingScore
+        : 1;
+      const targetPairChunkUsd = pairChunkUsd * dynamicSizingScale;
+      const coinExposureRemaining =
+        maxCoinExposureSharePct > 0
+          ? (runBudgetCapUsd * maxCoinExposureSharePct) / 100 - (coinExposureUsd[signal.coin] ?? 0)
+          : Infinity;
+      const cadenceExposureRemaining =
+        maxCadenceExposureSharePct > 0
+          ? (runBudgetCapUsd * maxCadenceExposureSharePct) / 100 -
+            (cadenceExposureUsd[signal.cadence] ?? 0)
+          : Infinity;
+      let pairSpend = Math.min(
+        targetPairChunkUsd,
+        remainingBudgetUsd,
+        conditionExposureRemaining,
+        coinExposureRemaining,
+        cadenceExposureRemaining
+      );
       if (pairSpend <= 0) {
         if (!acceptedEntryForSignal) {
-          reject("pair_spend_non_positive");
+          if (coinExposureRemaining <= 0) {
+            reject(`coin_exposure_share_cap_reached_${signal.coin.toLowerCase()}`);
+          } else if (cadenceExposureRemaining <= 0) {
+            reject(`cadence_exposure_share_cap_reached_${signal.cadence}`);
+          } else {
+            reject("pair_spend_non_positive");
+          }
         }
         break;
       }
@@ -867,6 +1089,26 @@ export async function runPairedStrategy(
           }
           break;
         }
+        if (
+          maxCoinExposureSharePct > 0 &&
+          (coinExposureUsd[signal.coin] ?? 0) + pairSpend >
+            (runBudgetCapUsd * maxCoinExposureSharePct) / 100
+        ) {
+          if (!acceptedEntryForSignal) {
+            reject(`coin_exposure_share_cap_reached_${signal.coin.toLowerCase()}`);
+          }
+          break;
+        }
+        if (
+          maxCadenceExposureSharePct > 0 &&
+          (cadenceExposureUsd[signal.cadence] ?? 0) + pairSpend >
+            (runBudgetCapUsd * maxCadenceExposureSharePct) / 100
+        ) {
+          if (!acceptedEntryForSignal) {
+            reject(`cadence_exposure_share_cap_reached_${signal.cadence}`);
+          }
+          break;
+        }
         if (pairSpend > remainingBudgetUsd) {
           if (!acceptedEntryForSignal) {
             reject("pair_exceeds_remaining_budget");
@@ -887,7 +1129,7 @@ export async function runPairedStrategy(
         result.executedNetEdgeCentsSum += netEdgeCents;
         bumpBreakdown(result.executedBreakdown, signal);
         result.simulatedVolumeUsd += legAUsd + legBUsd;
-        addConditionExposure(signal.conditionId, legAUsd + legBUsd);
+        addSignalExposure(signal, legAUsd + legBUsd);
         remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
         lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
         result.copiedTrades.push({
@@ -928,7 +1170,7 @@ export async function runPairedStrategy(
         result.executedEdgeCentsSum += signal.edge * 100;
         result.executedNetEdgeCentsSum += netEdgeCents;
         bumpBreakdown(result.executedBreakdown, signal);
-        addConditionExposure(signal.conditionId, legAUsd + legBUsd);
+        addSignalExposure(signal, legAUsd + legBUsd);
         remainingBudgetUsd = Math.max(0, remainingBudgetUsd - (legAUsd + legBUsd));
         lastTimestamp = Math.max(lastTimestamp ?? 0, signal.latestTimestamp);
         result.copiedTrades.push({
