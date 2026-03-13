@@ -470,6 +470,7 @@ export async function runPairedStrategy(
     pairMinEdgeCentsHourly: number;
     pairFeeBps: number;
     pairSlippageCents: number;
+    liveMinNetEdgeSurplusCents: number;
     pairLookbackSeconds: number;
     pairMaxMarketsPerRun: number;
     reentryMaxEntriesPerSignal: number;
@@ -566,6 +567,10 @@ export async function runPairedStrategy(
   const pairChunkUsd = Math.max(1, Number(config.pairChunkUsd) || 3);
   const pairFeeBps = Math.max(0, Math.min(200, Number(config.pairFeeBps) || 0));
   const pairSlippageCents = Math.max(0, Math.min(25, Number(config.pairSlippageCents) || 0));
+  const liveMinNetEdgeSurplusCents = Math.max(
+    0,
+    Math.min(10, Number(config.liveMinNetEdgeSurplusCents) || 0)
+  );
   const liveBuyPriceBuffer = Math.max(
     MIN_LIVE_BUY_PRICE_BUFFER,
     Math.min(0.05, pairSlippageCents / 100 + 0.005)
@@ -773,6 +778,11 @@ export async function runPairedStrategy(
       );
       continue;
     }
+    const netEdgeSurplusCents = netEdgeCents - signalMinEdgeCents;
+    if (mode === "live" && netEdgeSurplusCents < liveMinNetEdgeSurplusCents) {
+      reject("live_edge_surplus_below_min");
+      continue;
+    }
 
     const pairSum = signal.pairSum;
     if (pairSum <= 0 || pairSum >= 2) {
@@ -907,6 +917,10 @@ export async function runPairedStrategy(
         result.error = clipError(result.error, "Missing CLOB client in live mode");
         break;
       }
+      const dynamicBuyPriceBuffer = Math.max(
+        MIN_LIVE_BUY_PRICE_BUFFER,
+        Math.min(liveBuyPriceBuffer, Math.max(MIN_LIVE_BUY_PRICE_BUFFER, netEdgeSurplusCents / 100))
+      );
 
       const recordLivePair = () => {
         copiedSet.add(signalKey);
@@ -945,7 +959,7 @@ export async function runPairedStrategy(
         try {
           const buyPrice = Math.max(
             0.001,
-            Math.min(0.999, quotePrice + liveBuyPriceBuffer)
+            Math.min(0.999, quotePrice + dynamicBuyPriceBuffer)
           );
           const resp = await client.createAndPostMarketOrder(
             {

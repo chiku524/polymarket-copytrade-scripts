@@ -89,6 +89,7 @@ interface Config {
   pairMinEdgeCentsHourly: number;
   pairFeeBps: number;
   pairSlippageCents: number;
+  liveMinNetEdgeSurplusCents: number;
   pairLookbackSeconds: number;
   pairMaxMarketsPerRun: number;
   reentryMaxEntriesPerSignal: number;
@@ -131,6 +132,7 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   pairMinEdgeCentsHourly: 0.2,
   pairFeeBps: 2,
   pairSlippageCents: 0.05,
+  liveMinNetEdgeSurplusCents: 0.05,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -154,6 +156,7 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   pairMinEdgeCentsHourly: 0.5,
   pairFeeBps: 2,
   pairSlippageCents: 0.05,
+  liveMinNetEdgeSurplusCents: 0.1,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
   reentryMaxEntriesPerSignal: 2,
@@ -578,6 +581,7 @@ export default function Home() {
         pairMinEdgeCentsHourly: 0.5,
         pairFeeBps: 2,
         pairSlippageCents: 0.05,
+        liveMinNetEdgeSurplusCents: 0.1,
         pairLookbackSeconds: 120,
         pairMaxMarketsPerRun: 4,
         reentryMaxEntriesPerSignal: 2,
@@ -650,6 +654,7 @@ export default function Home() {
     pairMinEdgeCentsHourly: 0.5,
     pairFeeBps: 2,
     pairSlippageCents: 0.05,
+    liveMinNetEdgeSurplusCents: 0.1,
     pairLookbackSeconds: 120,
     pairMaxMarketsPerRun: 4,
     reentryMaxEntriesPerSignal: 2,
@@ -839,7 +844,7 @@ export default function Home() {
     .filter(Boolean)
     .join(", ") || "None";
   const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
-  const edgeQualitySummary = `fee ${cfg.pairFeeBps.toFixed(1)} bps · slippage ${cfg.pairSlippageCents.toFixed(2)}¢/leg`;
+  const edgeQualitySummary = `fee ${cfg.pairFeeBps.toFixed(1)} bps · slippage ${cfg.pairSlippageCents.toFixed(2)}¢/leg · live surplus ${cfg.liveMinNetEdgeSurplusCents.toFixed(2)}¢+`;
   const guardrailSummary = `max imbalances ${cfg.maxUnresolvedImbalancesPerRun} · unwind slippage ${cfg.unwindSellSlippageCents.toFixed(1)}¢ · unwind buffer ${cfg.unwindShareBufferPct.toFixed(0)}%`;
   const dailyCapSummary = `notional cap ${
     cfg.maxDailyLiveNotionalUsd > 0 ? `$${cfg.maxDailyLiveNotionalUsd.toFixed(0)}` : "off"
@@ -1308,6 +1313,26 @@ export default function Home() {
                     parseFloat(e.target.value) || 0,
                     0,
                     25
+                  )
+                }
+                disabled={saving}
+                className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Live min surplus (¢)</p>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.01}
+                value={cfg.liveMinNetEdgeSurplusCents}
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "liveMinNetEdgeSurplusCents",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    10
                   )
                 }
                 disabled={saving}

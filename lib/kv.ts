@@ -210,6 +210,8 @@ export interface CopyTraderConfig {
   pairFeeBps: number;
   /** Estimated per-leg slippage in cents used for net-edge gating */
   pairSlippageCents: number;
+  /** Live-only minimum net-edge surplus above threshold before entry */
+  liveMinNetEdgeSurplusCents: number;
   /** Recency window for global market signal discovery */
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
@@ -385,6 +387,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairMinEdgeCentsHourly: 0.5,
   pairFeeBps: 2,
   pairSlippageCents: 0.05,
+  liveMinNetEdgeSurplusCents: 0.1,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
   reentryMaxEntriesPerSignal: 2,
@@ -598,6 +601,11 @@ function sanitizeConfig(
       0,
       25
     ),
+    liveMinNetEdgeSurplusCents: clamp(
+      toFiniteNumber(raw.liveMinNetEdgeSurplusCents, current.liveMinNetEdgeSurplusCents),
+      0,
+      10
+    ),
     pairLookbackSeconds: clamp(
       toFiniteNumber(raw.pairLookbackSeconds, current.pairLookbackSeconds),
       20,
@@ -735,6 +743,11 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.pairEstimatedSlippageCents ??
       c.estimatedSlippageCents ??
       DEFAULT_CONFIG.pairSlippageCents,
+    liveMinNetEdgeSurplusCents:
+      c.liveMinNetEdgeSurplusCents ??
+      c.liveMinEdgeSurplusCents ??
+      c.liveNetEdgeSurplusMinCents ??
+      DEFAULT_CONFIG.liveMinNetEdgeSurplusCents,
     pairLookbackSeconds:
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:

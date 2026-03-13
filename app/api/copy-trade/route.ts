@@ -203,6 +203,7 @@ async function runCopyTradeHandler() {
         pairMinEdgeCentsHourly: config.pairMinEdgeCentsHourly,
         pairFeeBps: config.pairFeeBps,
         pairSlippageCents: config.pairSlippageCents,
+        liveMinNetEdgeSurplusCents: config.liveMinNetEdgeSurplusCents,
         pairLookbackSeconds: config.pairLookbackSeconds,
         pairMaxMarketsPerRun: config.pairMaxMarketsPerRun,
         reentryMaxEntriesPerSignal: config.reentryMaxEntriesPerSignal,
