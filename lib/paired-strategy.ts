@@ -490,6 +490,17 @@ export async function runPairedStrategy(
     adaptiveEdgeLowActivityTradeCount: number;
     adaptiveEdgeMaxPenaltyCents: number;
     adaptiveEdgeStalePenaltyCents: number;
+    adaptiveEdgeStalePenaltyCents5m: number;
+    adaptiveEdgeStalePenaltyCents15m: number;
+    adaptiveEdgeStalePenaltyCentsHourly: number;
+    freshnessMaxSignalAgeSec5m: number;
+    freshnessMaxSignalAgeSec15m: number;
+    freshnessMaxSignalAgeSecHourly: number;
+    freshnessMaxExecutionQuoteAgeSec5m: number;
+    freshnessMaxExecutionQuoteAgeSec15m: number;
+    freshnessMaxExecutionQuoteAgeSecHourly: number;
+    paperRelaxFreshness: boolean;
+    paperFreshnessAgeMultiplier: number;
     dynamicSizingEnabled: boolean;
     dynamicSizingMinScalePct: number;
     dynamicSizingMaxScalePct: number;
@@ -614,6 +625,28 @@ export async function runPairedStrategy(
     0,
     Math.min(10, Number(config.adaptiveEdgeStalePenaltyCents) || 0)
   );
+  const adaptiveEdgeStalePenaltyByCadenceCents: Record<PairCadence, number> = {
+    "5m": (() => {
+      const raw = Number(config.adaptiveEdgeStalePenaltyCents5m);
+      const value = Number.isFinite(raw) ? raw : adaptiveEdgeStalePenaltyCents;
+      return Math.max(0, Math.min(10, value));
+    })(),
+    "15m": (() => {
+      const raw = Number(config.adaptiveEdgeStalePenaltyCents15m);
+      const value = Number.isFinite(raw) ? raw : adaptiveEdgeStalePenaltyCents;
+      return Math.max(0, Math.min(10, value));
+    })(),
+    hourly: (() => {
+      const raw = Number(config.adaptiveEdgeStalePenaltyCentsHourly);
+      const value = Number.isFinite(raw) ? raw : adaptiveEdgeStalePenaltyCents;
+      return Math.max(0, Math.min(10, value));
+    })(),
+    other: adaptiveEdgeStalePenaltyCents,
+  };
+  const paperRelaxFreshness = mode === "paper" && config.paperRelaxFreshness === true;
+  const paperFreshnessAgeMultiplier = paperRelaxFreshness
+    ? Math.max(1, Math.min(4, Number(config.paperFreshnessAgeMultiplier) || 1.5))
+    : 1;
   const dynamicSizingEnabled = config.dynamicSizingEnabled !== false;
   const dynamicSizingMinScale = Math.max(
     0.1,
@@ -862,16 +895,39 @@ export async function runPairedStrategy(
     other: 300,
   };
   const cadenceMaxSignalAgeSec: Record<PairCadence, number> = {
-    "5m": 180,
-    "15m": 540,
-    hourly: 2100,
+    "5m": Math.max(20, Math.min(3600, Number(config.freshnessMaxSignalAgeSec5m) || 180)),
+    "15m": Math.max(20, Math.min(7200, Number(config.freshnessMaxSignalAgeSec15m) || 540)),
+    hourly: Math.max(20, Math.min(14400, Number(config.freshnessMaxSignalAgeSecHourly) || 2100)),
     other: 600,
   };
+  if (paperRelaxFreshness) {
+    cadenceMaxSignalAgeSec["5m"] = Math.floor(cadenceMaxSignalAgeSec["5m"] * paperFreshnessAgeMultiplier);
+    cadenceMaxSignalAgeSec["15m"] = Math.floor(cadenceMaxSignalAgeSec["15m"] * paperFreshnessAgeMultiplier);
+    cadenceMaxSignalAgeSec.hourly = Math.floor(
+      cadenceMaxSignalAgeSec.hourly * paperFreshnessAgeMultiplier
+    );
+    cadenceMaxSignalAgeSec.other = Math.floor(cadenceMaxSignalAgeSec.other * paperFreshnessAgeMultiplier);
+  }
   const cadenceMaxOutcomeSkewSec: Record<PairCadence, number> = {
     "5m": 75,
     "15m": 180,
     hourly: 600,
     other: 120,
+  };
+  const cadenceMaxExecutionQuoteAgeSecConfigured: Record<PairCadence, number> = {
+    "5m": Math.max(
+      0,
+      Math.min(3600, Math.floor(Number(config.freshnessMaxExecutionQuoteAgeSec5m) || 0))
+    ),
+    "15m": Math.max(
+      0,
+      Math.min(7200, Math.floor(Number(config.freshnessMaxExecutionQuoteAgeSec15m) || 0))
+    ),
+    hourly: Math.max(
+      0,
+      Math.min(14400, Math.floor(Number(config.freshnessMaxExecutionQuoteAgeSecHourly) || 0))
+    ),
+    other: 0,
   };
   const rankedSignals = signals
     .map((signal) => {
@@ -899,7 +955,7 @@ export async function runPairedStrategy(
       const adaptivePenaltyCents =
         adaptiveEdgeEnabled
           ? (1 - activityRatio) * adaptiveEdgeMaxPenaltyCents +
-            (1 - freshness) * adaptiveEdgeStalePenaltyCents
+            (1 - freshness) * (adaptiveEdgeStalePenaltyByCadenceCents[signal.cadence] ?? adaptiveEdgeStalePenaltyCents)
           : 0;
       const signalMinEdgeCents = baseSignalMinEdgeCents + adaptivePenaltyCents;
       const netSurplusCents = netEdgeCents - signalMinEdgeCents;
@@ -932,10 +988,7 @@ export async function runPairedStrategy(
     const signalMinEdgeCents = rankedSignal.signalMinEdgeCents;
     const baseSignalMinEdgeCents = rankedSignal.baseSignalMinEdgeCents;
     const adaptivePenaltyCents = rankedSignal.adaptivePenaltyCents;
-    const maxSignalAgeSec = Math.max(
-      30,
-      Math.min(lookbackSeconds, cadenceMaxSignalAgeSec[signal.cadence] ?? lookbackSeconds)
-    );
+    const maxSignalAgeSec = Math.max(30, cadenceMaxSignalAgeSec[signal.cadence] ?? lookbackSeconds);
     const signalAgeSec = Math.max(0, Math.floor(Date.now() / 1000) - signal.latestTimestamp);
     if (signalAgeSec > maxSignalAgeSec) {
       reject(`signal_stale_${signal.cadence}`);
@@ -985,7 +1038,12 @@ export async function runPairedStrategy(
       1,
       Math.min(reentryMaxEntriesPerSignal, 1 + extraEntriesByEdge)
     );
-    const maxExecutionQuoteAgeSec = Math.max(20, Math.floor(maxSignalAgeSec * 0.7));
+    const configuredQuoteAge = cadenceMaxExecutionQuoteAgeSecConfigured[signal.cadence] ?? 0;
+    let maxExecutionQuoteAgeSec =
+      configuredQuoteAge > 0 ? configuredQuoteAge : Math.max(20, Math.floor(maxSignalAgeSec * 0.7));
+    if (paperRelaxFreshness) {
+      maxExecutionQuoteAgeSec = Math.floor(maxExecutionQuoteAgeSec * paperFreshnessAgeMultiplier);
+    }
     let acceptedEntryForSignal = false;
     for (let entryIndex = 0; entryIndex < maxEntriesForSignal; entryIndex++) {
       if (result.eligibleSignals >= maxMarketsPerRun) {

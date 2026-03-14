@@ -94,6 +94,17 @@ interface Config {
   adaptiveEdgeLowActivityTradeCount: number;
   adaptiveEdgeMaxPenaltyCents: number;
   adaptiveEdgeStalePenaltyCents: number;
+  adaptiveEdgeStalePenaltyCents5m: number;
+  adaptiveEdgeStalePenaltyCents15m: number;
+  adaptiveEdgeStalePenaltyCentsHourly: number;
+  freshnessMaxSignalAgeSec5m: number;
+  freshnessMaxSignalAgeSec15m: number;
+  freshnessMaxSignalAgeSecHourly: number;
+  freshnessMaxExecutionQuoteAgeSec5m: number;
+  freshnessMaxExecutionQuoteAgeSec15m: number;
+  freshnessMaxExecutionQuoteAgeSecHourly: number;
+  paperRelaxFreshness: boolean;
+  paperFreshnessAgeMultiplier: number;
   dynamicSizingEnabled: boolean;
   dynamicSizingMinScalePct: number;
   dynamicSizingMaxScalePct: number;
@@ -152,6 +163,17 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   adaptiveEdgeLowActivityTradeCount: 8,
   adaptiveEdgeMaxPenaltyCents: 0.2,
   adaptiveEdgeStalePenaltyCents: 0.2,
+  adaptiveEdgeStalePenaltyCents5m: 0.2,
+  adaptiveEdgeStalePenaltyCents15m: 0.2,
+  adaptiveEdgeStalePenaltyCentsHourly: 0.2,
+  freshnessMaxSignalAgeSec5m: 180,
+  freshnessMaxSignalAgeSec15m: 540,
+  freshnessMaxSignalAgeSecHourly: 2100,
+  freshnessMaxExecutionQuoteAgeSec5m: 0,
+  freshnessMaxExecutionQuoteAgeSec15m: 0,
+  freshnessMaxExecutionQuoteAgeSecHourly: 0,
+  paperRelaxFreshness: false,
+  paperFreshnessAgeMultiplier: 1.5,
   dynamicSizingEnabled: true,
   dynamicSizingMinScalePct: 80,
   dynamicSizingMaxScalePct: 150,
@@ -191,6 +213,17 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   adaptiveEdgeLowActivityTradeCount: 8,
   adaptiveEdgeMaxPenaltyCents: 0.2,
   adaptiveEdgeStalePenaltyCents: 0.2,
+  adaptiveEdgeStalePenaltyCents5m: 0.2,
+  adaptiveEdgeStalePenaltyCents15m: 0.2,
+  adaptiveEdgeStalePenaltyCentsHourly: 0.2,
+  freshnessMaxSignalAgeSec5m: 180,
+  freshnessMaxSignalAgeSec15m: 540,
+  freshnessMaxSignalAgeSecHourly: 2100,
+  freshnessMaxExecutionQuoteAgeSec5m: 0,
+  freshnessMaxExecutionQuoteAgeSec15m: 0,
+  freshnessMaxExecutionQuoteAgeSecHourly: 0,
+  paperRelaxFreshness: false,
+  paperFreshnessAgeMultiplier: 1.5,
   dynamicSizingEnabled: true,
   dynamicSizingMinScalePct: 70,
   dynamicSizingMaxScalePct: 140,
@@ -631,6 +664,17 @@ export default function Home() {
         adaptiveEdgeLowActivityTradeCount: 8,
         adaptiveEdgeMaxPenaltyCents: 0.2,
         adaptiveEdgeStalePenaltyCents: 0.2,
+        adaptiveEdgeStalePenaltyCents5m: 0.2,
+        adaptiveEdgeStalePenaltyCents15m: 0.2,
+        adaptiveEdgeStalePenaltyCentsHourly: 0.2,
+        freshnessMaxSignalAgeSec5m: 180,
+        freshnessMaxSignalAgeSec15m: 540,
+        freshnessMaxSignalAgeSecHourly: 2100,
+        freshnessMaxExecutionQuoteAgeSec5m: 0,
+        freshnessMaxExecutionQuoteAgeSec15m: 0,
+        freshnessMaxExecutionQuoteAgeSecHourly: 0,
+        paperRelaxFreshness: false,
+        paperFreshnessAgeMultiplier: 1.5,
         dynamicSizingEnabled: true,
         dynamicSizingMinScalePct: 70,
         dynamicSizingMaxScalePct: 140,
@@ -719,6 +763,17 @@ export default function Home() {
     adaptiveEdgeLowActivityTradeCount: 8,
     adaptiveEdgeMaxPenaltyCents: 0.2,
     adaptiveEdgeStalePenaltyCents: 0.2,
+    adaptiveEdgeStalePenaltyCents5m: 0.2,
+    adaptiveEdgeStalePenaltyCents15m: 0.2,
+    adaptiveEdgeStalePenaltyCentsHourly: 0.2,
+    freshnessMaxSignalAgeSec5m: 180,
+    freshnessMaxSignalAgeSec15m: 540,
+    freshnessMaxSignalAgeSecHourly: 2100,
+    freshnessMaxExecutionQuoteAgeSec5m: 0,
+    freshnessMaxExecutionQuoteAgeSec15m: 0,
+    freshnessMaxExecutionQuoteAgeSecHourly: 0,
+    paperRelaxFreshness: false,
+    paperFreshnessAgeMultiplier: 1.5,
     dynamicSizingEnabled: true,
     dynamicSizingMinScalePct: 70,
     dynamicSizingMaxScalePct: 140,
@@ -921,8 +976,17 @@ export default function Home() {
   const cadenceEdgeSummary = `5m ${cfg.pairMinEdgeCents5m.toFixed(1)}¢ · 15m ${cfg.pairMinEdgeCents15m.toFixed(1)}¢ · Hourly ${cfg.pairMinEdgeCentsHourly.toFixed(1)}¢`;
   const edgeQualitySummary = `fee ${cfg.pairFeeBps.toFixed(1)} bps · slippage ${cfg.pairSlippageCents.toFixed(2)}¢/leg · live surplus ${cfg.liveMinNetEdgeSurplusCents.toFixed(2)}¢+`;
   const adaptiveSummary = cfg.adaptiveEdgeEnabled
-    ? `adaptive edge on (${cfg.adaptiveEdgeMaxPenaltyCents.toFixed(2)}¢ liq · ${cfg.adaptiveEdgeStalePenaltyCents.toFixed(2)}¢ stale)`
+    ? `adaptive edge on (${cfg.adaptiveEdgeMaxPenaltyCents.toFixed(2)}¢ liq · stale 5m/15m/h ${cfg.adaptiveEdgeStalePenaltyCents5m.toFixed(2)}/${cfg.adaptiveEdgeStalePenaltyCents15m.toFixed(2)}/${cfg.adaptiveEdgeStalePenaltyCentsHourly.toFixed(2)}¢)`
     : "adaptive edge off";
+  const freshnessSummary = `freshness age 5m/15m/h ${cfg.freshnessMaxSignalAgeSec5m}s/${cfg.freshnessMaxSignalAgeSec15m}s/${cfg.freshnessMaxSignalAgeSecHourly}s · quote ${
+    cfg.freshnessMaxExecutionQuoteAgeSec5m > 0 ? cfg.freshnessMaxExecutionQuoteAgeSec5m : "auto"
+  }/${
+    cfg.freshnessMaxExecutionQuoteAgeSec15m > 0 ? cfg.freshnessMaxExecutionQuoteAgeSec15m : "auto"
+  }/${
+    cfg.freshnessMaxExecutionQuoteAgeSecHourly > 0
+      ? cfg.freshnessMaxExecutionQuoteAgeSecHourly
+      : "auto"
+  }s${cfg.paperRelaxFreshness ? ` · paper x${cfg.paperFreshnessAgeMultiplier.toFixed(2)}` : ""}`;
   const dynamicSizingSummary = cfg.dynamicSizingEnabled
     ? `dynamic size ${cfg.dynamicSizingMinScalePct.toFixed(0)}-${cfg.dynamicSizingMaxScalePct.toFixed(0)}%`
     : "dynamic size off";
@@ -1255,7 +1319,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {adaptiveSummary} · {dynamicSizingSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
+                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1631,7 +1695,7 @@ export default function Home() {
                   />
                 </div>
                 <div>
-                  <p className="text-xs text-zinc-500 mb-1">Adaptive stale penalty (¢)</p>
+                  <p className="text-xs text-zinc-500 mb-1">Adaptive stale base (¢)</p>
                   <input
                     type="number"
                     min={0}
@@ -1648,6 +1712,219 @@ export default function Home() {
                     }
                     disabled={saving}
                     className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Stale penalty 5m/15m/h (¢)</p>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.01}
+                      value={cfg.adaptiveEdgeStalePenaltyCents5m}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "adaptiveEdgeStalePenaltyCents5m",
+                          parseFloat(e.target.value) || 0,
+                          0,
+                          10
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.01}
+                      value={cfg.adaptiveEdgeStalePenaltyCents15m}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "adaptiveEdgeStalePenaltyCents15m",
+                          parseFloat(e.target.value) || 0,
+                          0,
+                          10
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.01}
+                      value={cfg.adaptiveEdgeStalePenaltyCentsHourly}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "adaptiveEdgeStalePenaltyCentsHourly",
+                          parseFloat(e.target.value) || 0,
+                          0,
+                          10
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Signal age 5m/15m/h (s)</p>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={20}
+                      max={3600}
+                      step={5}
+                      value={cfg.freshnessMaxSignalAgeSec5m}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "freshnessMaxSignalAgeSec5m",
+                          parseInt(e.target.value, 10) || 20,
+                          20,
+                          3600
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={20}
+                      max={7200}
+                      step={5}
+                      value={cfg.freshnessMaxSignalAgeSec15m}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "freshnessMaxSignalAgeSec15m",
+                          parseInt(e.target.value, 10) || 20,
+                          20,
+                          7200
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={20}
+                      max={14400}
+                      step={5}
+                      value={cfg.freshnessMaxSignalAgeSecHourly}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "freshnessMaxSignalAgeSecHourly",
+                          parseInt(e.target.value, 10) || 20,
+                          20,
+                          14400
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Quote age 5m/15m/h (s, 0=auto)</p>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={3600}
+                      step={1}
+                      value={cfg.freshnessMaxExecutionQuoteAgeSec5m}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "freshnessMaxExecutionQuoteAgeSec5m",
+                          parseInt(e.target.value, 10) || 0,
+                          0,
+                          3600
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={7200}
+                      step={1}
+                      value={cfg.freshnessMaxExecutionQuoteAgeSec15m}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "freshnessMaxExecutionQuoteAgeSec15m",
+                          parseInt(e.target.value, 10) || 0,
+                          0,
+                          7200
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={14400}
+                      step={1}
+                      value={cfg.freshnessMaxExecutionQuoteAgeSecHourly}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "freshnessMaxExecutionQuoteAgeSecHourly",
+                          parseInt(e.target.value, 10) || 0,
+                          0,
+                          14400
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={cfg.paperRelaxFreshness}
+                  onClick={() => updateConfig({ paperRelaxFreshness: !cfg.paperRelaxFreshness }, true)}
+                  disabled={saving}
+                  className={`
+                    relative w-11 h-6 rounded-full transition-colors flex-shrink-0
+                    ${cfg.paperRelaxFreshness ? "bg-violet-500" : "bg-zinc-700"}
+                    ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                  `}
+                >
+                  <span
+                    className={`
+                      absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform
+                      ${cfg.paperRelaxFreshness ? "left-6 translate-x-[-2px]" : "left-1"}
+                    `}
+                  />
+                </button>
+                <p className="text-xs text-zinc-300">Relax freshness in paper</p>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Paper freshness x</p>
+                  <input
+                    type="number"
+                    min={1}
+                    max={4}
+                    step={0.1}
+                    value={cfg.paperFreshnessAgeMultiplier}
+                    onChange={(e) =>
+                      handleNumericConfigChange(
+                        "paperFreshnessAgeMultiplier",
+                        parseFloat(e.target.value) || 1,
+                        1,
+                        4
+                      )
+                    }
+                    disabled={saving}
+                    className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
                   />
                 </div>
                 <div>

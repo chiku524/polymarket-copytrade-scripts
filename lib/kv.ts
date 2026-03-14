@@ -220,6 +220,28 @@ export interface CopyTraderConfig {
   adaptiveEdgeMaxPenaltyCents: number;
   /** Maximum adaptive penalty for staler signals (cents) */
   adaptiveEdgeStalePenaltyCents: number;
+  /** 5m-specific stale penalty override (cents) */
+  adaptiveEdgeStalePenaltyCents5m: number;
+  /** 15m-specific stale penalty override (cents) */
+  adaptiveEdgeStalePenaltyCents15m: number;
+  /** Hourly-specific stale penalty override (cents) */
+  adaptiveEdgeStalePenaltyCentsHourly: number;
+  /** Maximum signal age for 5m cadence (seconds) */
+  freshnessMaxSignalAgeSec5m: number;
+  /** Maximum signal age for 15m cadence (seconds) */
+  freshnessMaxSignalAgeSec15m: number;
+  /** Maximum signal age for hourly cadence (seconds) */
+  freshnessMaxSignalAgeSecHourly: number;
+  /** Maximum quote age before execution for 5m cadence (seconds, 0 = auto) */
+  freshnessMaxExecutionQuoteAgeSec5m: number;
+  /** Maximum quote age before execution for 15m cadence (seconds, 0 = auto) */
+  freshnessMaxExecutionQuoteAgeSec15m: number;
+  /** Maximum quote age before execution for hourly cadence (seconds, 0 = auto) */
+  freshnessMaxExecutionQuoteAgeSecHourly: number;
+  /** In paper mode, relax freshness age windows */
+  paperRelaxFreshness: boolean;
+  /** Multiplier used when paper freshness relaxation is enabled */
+  paperFreshnessAgeMultiplier: number;
   /** Enable dynamic pair sizing by edge/activity quality */
   dynamicSizingEnabled: boolean;
   /** Minimum dynamic sizing scale (percent of pair chunk) */
@@ -422,6 +444,17 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   adaptiveEdgeLowActivityTradeCount: 8,
   adaptiveEdgeMaxPenaltyCents: 0.2,
   adaptiveEdgeStalePenaltyCents: 0.2,
+  adaptiveEdgeStalePenaltyCents5m: 0.2,
+  adaptiveEdgeStalePenaltyCents15m: 0.2,
+  adaptiveEdgeStalePenaltyCentsHourly: 0.2,
+  freshnessMaxSignalAgeSec5m: 180,
+  freshnessMaxSignalAgeSec15m: 540,
+  freshnessMaxSignalAgeSecHourly: 2100,
+  freshnessMaxExecutionQuoteAgeSec5m: 0,
+  freshnessMaxExecutionQuoteAgeSec15m: 0,
+  freshnessMaxExecutionQuoteAgeSecHourly: 0,
+  paperRelaxFreshness: false,
+  paperFreshnessAgeMultiplier: 1.5,
   dynamicSizingEnabled: true,
   dynamicSizingMinScalePct: 70,
   dynamicSizingMaxScalePct: 140,
@@ -669,6 +702,79 @@ function sanitizeConfig(
       0,
       10
     ),
+    adaptiveEdgeStalePenaltyCents5m: clamp(
+      toFiniteNumber(raw.adaptiveEdgeStalePenaltyCents5m, current.adaptiveEdgeStalePenaltyCents5m),
+      0,
+      10
+    ),
+    adaptiveEdgeStalePenaltyCents15m: clamp(
+      toFiniteNumber(raw.adaptiveEdgeStalePenaltyCents15m, current.adaptiveEdgeStalePenaltyCents15m),
+      0,
+      10
+    ),
+    adaptiveEdgeStalePenaltyCentsHourly: clamp(
+      toFiniteNumber(
+        raw.adaptiveEdgeStalePenaltyCentsHourly,
+        current.adaptiveEdgeStalePenaltyCentsHourly
+      ),
+      0,
+      10
+    ),
+    freshnessMaxSignalAgeSec5m: clamp(
+      Math.floor(toFiniteNumber(raw.freshnessMaxSignalAgeSec5m, current.freshnessMaxSignalAgeSec5m)),
+      20,
+      3600
+    ),
+    freshnessMaxSignalAgeSec15m: clamp(
+      Math.floor(
+        toFiniteNumber(raw.freshnessMaxSignalAgeSec15m, current.freshnessMaxSignalAgeSec15m)
+      ),
+      20,
+      7200
+    ),
+    freshnessMaxSignalAgeSecHourly: clamp(
+      Math.floor(
+        toFiniteNumber(raw.freshnessMaxSignalAgeSecHourly, current.freshnessMaxSignalAgeSecHourly)
+      ),
+      20,
+      14400
+    ),
+    freshnessMaxExecutionQuoteAgeSec5m: clamp(
+      Math.floor(
+        toFiniteNumber(
+          raw.freshnessMaxExecutionQuoteAgeSec5m,
+          current.freshnessMaxExecutionQuoteAgeSec5m
+        )
+      ),
+      0,
+      3600
+    ),
+    freshnessMaxExecutionQuoteAgeSec15m: clamp(
+      Math.floor(
+        toFiniteNumber(
+          raw.freshnessMaxExecutionQuoteAgeSec15m,
+          current.freshnessMaxExecutionQuoteAgeSec15m
+        )
+      ),
+      0,
+      7200
+    ),
+    freshnessMaxExecutionQuoteAgeSecHourly: clamp(
+      Math.floor(
+        toFiniteNumber(
+          raw.freshnessMaxExecutionQuoteAgeSecHourly,
+          current.freshnessMaxExecutionQuoteAgeSecHourly
+        )
+      ),
+      0,
+      14400
+    ),
+    paperRelaxFreshness: raw.paperRelaxFreshness === true,
+    paperFreshnessAgeMultiplier: clamp(
+      toFiniteNumber(raw.paperFreshnessAgeMultiplier, current.paperFreshnessAgeMultiplier),
+      1,
+      4
+    ),
     dynamicSizingEnabled: raw.dynamicSizingEnabled !== false,
     dynamicSizingMinScalePct: clamp(
       toFiniteNumber(raw.dynamicSizingMinScalePct, current.dynamicSizingMinScalePct),
@@ -875,6 +981,53 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.adaptiveEdgeStalePenaltyCents ??
       c.adaptiveStalePenaltyCents ??
       DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCents,
+    adaptiveEdgeStalePenaltyCents5m:
+      c.adaptiveEdgeStalePenaltyCents5m ??
+      c.adaptiveStalePenaltyCents5m ??
+      c.adaptiveEdgeStalePenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCents5m,
+    adaptiveEdgeStalePenaltyCents15m:
+      c.adaptiveEdgeStalePenaltyCents15m ??
+      c.adaptiveStalePenaltyCents15m ??
+      c.adaptiveEdgeStalePenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCents15m,
+    adaptiveEdgeStalePenaltyCentsHourly:
+      c.adaptiveEdgeStalePenaltyCentsHourly ??
+      c.adaptiveStalePenaltyCentsHourly ??
+      c.adaptiveEdgeStalePenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCentsHourly,
+    freshnessMaxSignalAgeSec5m:
+      c.freshnessMaxSignalAgeSec5m ??
+      c.maxSignalAgeSec5m ??
+      DEFAULT_CONFIG.freshnessMaxSignalAgeSec5m,
+    freshnessMaxSignalAgeSec15m:
+      c.freshnessMaxSignalAgeSec15m ??
+      c.maxSignalAgeSec15m ??
+      DEFAULT_CONFIG.freshnessMaxSignalAgeSec15m,
+    freshnessMaxSignalAgeSecHourly:
+      c.freshnessMaxSignalAgeSecHourly ??
+      c.maxSignalAgeSecHourly ??
+      DEFAULT_CONFIG.freshnessMaxSignalAgeSecHourly,
+    freshnessMaxExecutionQuoteAgeSec5m:
+      c.freshnessMaxExecutionQuoteAgeSec5m ??
+      c.maxExecutionQuoteAgeSec5m ??
+      DEFAULT_CONFIG.freshnessMaxExecutionQuoteAgeSec5m,
+    freshnessMaxExecutionQuoteAgeSec15m:
+      c.freshnessMaxExecutionQuoteAgeSec15m ??
+      c.maxExecutionQuoteAgeSec15m ??
+      DEFAULT_CONFIG.freshnessMaxExecutionQuoteAgeSec15m,
+    freshnessMaxExecutionQuoteAgeSecHourly:
+      c.freshnessMaxExecutionQuoteAgeSecHourly ??
+      c.maxExecutionQuoteAgeSecHourly ??
+      DEFAULT_CONFIG.freshnessMaxExecutionQuoteAgeSecHourly,
+    paperRelaxFreshness:
+      c.paperRelaxFreshness ??
+      c.relaxFreshnessInPaper ??
+      DEFAULT_CONFIG.paperRelaxFreshness,
+    paperFreshnessAgeMultiplier:
+      c.paperFreshnessAgeMultiplier ??
+      c.freshnessPaperMultiplier ??
+      DEFAULT_CONFIG.paperFreshnessAgeMultiplier,
     dynamicSizingEnabled: c.dynamicSizingEnabled,
     dynamicSizingMinScalePct:
       c.dynamicSizingMinScalePct ??
