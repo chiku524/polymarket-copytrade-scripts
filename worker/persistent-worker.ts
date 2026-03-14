@@ -13,7 +13,7 @@ type WorkerResult =
     }
   | Record<string, unknown>;
 
-const DEFAULT_INTERVAL_MS = 15000;
+const DEFAULT_INTERVAL_MS = 10000;
 const DEFAULT_TIMEOUT_MS = 70000;
 
 function sleep(ms: number): Promise<void> {

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "worker": "tsx worker/persistent-worker.ts"
+    "worker": "tsx worker/persistent-worker.ts",
+    "paper:ab": "node scripts/paper-ab.mjs"
   },
   "dependencies": {
     "@polymarket/builder-relayer-client": "^0.0.8",

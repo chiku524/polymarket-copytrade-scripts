@@ -210,12 +210,70 @@ export interface CopyTraderConfig {
   pairFeeBps: number;
   /** Estimated per-leg slippage in cents used for net-edge gating */
   pairSlippageCents: number;
+  /** Live-only minimum net-edge surplus above threshold before entry */
+  liveMinNetEdgeSurplusCents: number;
+  /** Enable adaptive edge thresholds based on freshness + activity */
+  adaptiveEdgeEnabled: boolean;
+  /** Trade-count target used by adaptive activity penalty */
+  adaptiveEdgeLowActivityTradeCount: number;
+  /** Maximum adaptive penalty for low-activity signals (cents) */
+  adaptiveEdgeMaxPenaltyCents: number;
+  /** Maximum adaptive penalty for staler signals (cents) */
+  adaptiveEdgeStalePenaltyCents: number;
+  /** 5m-specific stale penalty override (cents) */
+  adaptiveEdgeStalePenaltyCents5m: number;
+  /** 15m-specific stale penalty override (cents) */
+  adaptiveEdgeStalePenaltyCents15m: number;
+  /** Hourly-specific stale penalty override (cents) */
+  adaptiveEdgeStalePenaltyCentsHourly: number;
+  /** Maximum signal age for 5m cadence (seconds) */
+  freshnessMaxSignalAgeSec5m: number;
+  /** Maximum signal age for 15m cadence (seconds) */
+  freshnessMaxSignalAgeSec15m: number;
+  /** Maximum signal age for hourly cadence (seconds) */
+  freshnessMaxSignalAgeSecHourly: number;
+  /** Maximum quote age before execution for 5m cadence (seconds, 0 = auto) */
+  freshnessMaxExecutionQuoteAgeSec5m: number;
+  /** Maximum quote age before execution for 15m cadence (seconds, 0 = auto) */
+  freshnessMaxExecutionQuoteAgeSec15m: number;
+  /** Maximum quote age before execution for hourly cadence (seconds, 0 = auto) */
+  freshnessMaxExecutionQuoteAgeSecHourly: number;
+  /** In paper mode, relax freshness age windows */
+  paperRelaxFreshness: boolean;
+  /** Multiplier used when paper freshness relaxation is enabled */
+  paperFreshnessAgeMultiplier: number;
+  /** Enable dynamic pair sizing by edge/activity quality */
+  dynamicSizingEnabled: boolean;
+  /** Minimum dynamic sizing scale (percent of pair chunk) */
+  dynamicSizingMinScalePct: number;
+  /** Maximum dynamic sizing scale (percent of pair chunk) */
+  dynamicSizingMaxScalePct: number;
+  /** Net-edge surplus target (cents) for dynamic sizing to hit max scale */
+  dynamicSizingEdgeTargetCents: number;
+  /** Trade-count target used for dynamic sizing liquidity scaling */
+  dynamicSizingLiquidityTradeCount: number;
   /** Recency window for global market signal discovery */
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
   pairMaxMarketsPerRun: number;
+  /** Max entries allowed for the same signal snapshot in a run (>=1) */
+  reentryMaxEntriesPerSignal: number;
+  /** Net-edge step (cents) required for each additional same-signal entry */
+  reentryEdgeStepCents: number;
   /** Max exposure per condition within a run (0 = disabled) */
   maxConditionExposureUsd: number;
+  /** Max share of run budget allocated to one coin (0 = disabled) */
+  maxCoinExposureSharePct: number;
+  /** Max share of run budget allocated to one cadence bucket (0 = disabled) */
+  maxCadenceExposureSharePct: number;
+  /** Enable residual position lifecycle exits before new entries (live only) */
+  autoExitResidualPositions: boolean;
+  /** Minimum residual position value to attempt auto-exit */
+  residualPositionMinUsd: number;
+  /** Max residual positions to auto-exit per run */
+  residualPositionMaxPerRun: number;
+  /** SELL price discount from current price for residual exits (cents) */
+  residualPositionSellDiscountCents: number;
   /** Include BTC Up/Down markets in strategy */
   enableBtc: boolean;
   /** Include ETH Up/Down markets in strategy */
@@ -381,9 +439,38 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   pairMinEdgeCentsHourly: 0.5,
   pairFeeBps: 2,
   pairSlippageCents: 0.05,
+  liveMinNetEdgeSurplusCents: 0.1,
+  adaptiveEdgeEnabled: true,
+  adaptiveEdgeLowActivityTradeCount: 8,
+  adaptiveEdgeMaxPenaltyCents: 0.2,
+  adaptiveEdgeStalePenaltyCents: 0.2,
+  adaptiveEdgeStalePenaltyCents5m: 0.2,
+  adaptiveEdgeStalePenaltyCents15m: 0.2,
+  adaptiveEdgeStalePenaltyCentsHourly: 0.2,
+  freshnessMaxSignalAgeSec5m: 180,
+  freshnessMaxSignalAgeSec15m: 540,
+  freshnessMaxSignalAgeSecHourly: 2100,
+  freshnessMaxExecutionQuoteAgeSec5m: 0,
+  freshnessMaxExecutionQuoteAgeSec15m: 0,
+  freshnessMaxExecutionQuoteAgeSecHourly: 0,
+  paperRelaxFreshness: false,
+  paperFreshnessAgeMultiplier: 1.5,
+  dynamicSizingEnabled: true,
+  dynamicSizingMinScalePct: 70,
+  dynamicSizingMaxScalePct: 140,
+  dynamicSizingEdgeTargetCents: 1,
+  dynamicSizingLiquidityTradeCount: 12,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
+  reentryMaxEntriesPerSignal: 2,
+  reentryEdgeStepCents: 0.15,
   maxConditionExposureUsd: 0,
+  maxCoinExposureSharePct: 0,
+  maxCadenceExposureSharePct: 0,
+  autoExitResidualPositions: false,
+  residualPositionMinUsd: 1,
+  residualPositionMaxPerRun: 2,
+  residualPositionSellDiscountCents: 3,
   enableBtc: true,
   enableEth: true,
   enableCadence5m: true,
@@ -592,6 +679,125 @@ function sanitizeConfig(
       0,
       25
     ),
+    liveMinNetEdgeSurplusCents: clamp(
+      toFiniteNumber(raw.liveMinNetEdgeSurplusCents, current.liveMinNetEdgeSurplusCents),
+      0,
+      10
+    ),
+    adaptiveEdgeEnabled: raw.adaptiveEdgeEnabled !== false,
+    adaptiveEdgeLowActivityTradeCount: clamp(
+      Math.floor(
+        toFiniteNumber(raw.adaptiveEdgeLowActivityTradeCount, current.adaptiveEdgeLowActivityTradeCount)
+      ),
+      1,
+      200
+    ),
+    adaptiveEdgeMaxPenaltyCents: clamp(
+      toFiniteNumber(raw.adaptiveEdgeMaxPenaltyCents, current.adaptiveEdgeMaxPenaltyCents),
+      0,
+      10
+    ),
+    adaptiveEdgeStalePenaltyCents: clamp(
+      toFiniteNumber(raw.adaptiveEdgeStalePenaltyCents, current.adaptiveEdgeStalePenaltyCents),
+      0,
+      10
+    ),
+    adaptiveEdgeStalePenaltyCents5m: clamp(
+      toFiniteNumber(raw.adaptiveEdgeStalePenaltyCents5m, current.adaptiveEdgeStalePenaltyCents5m),
+      0,
+      10
+    ),
+    adaptiveEdgeStalePenaltyCents15m: clamp(
+      toFiniteNumber(raw.adaptiveEdgeStalePenaltyCents15m, current.adaptiveEdgeStalePenaltyCents15m),
+      0,
+      10
+    ),
+    adaptiveEdgeStalePenaltyCentsHourly: clamp(
+      toFiniteNumber(
+        raw.adaptiveEdgeStalePenaltyCentsHourly,
+        current.adaptiveEdgeStalePenaltyCentsHourly
+      ),
+      0,
+      10
+    ),
+    freshnessMaxSignalAgeSec5m: clamp(
+      Math.floor(toFiniteNumber(raw.freshnessMaxSignalAgeSec5m, current.freshnessMaxSignalAgeSec5m)),
+      20,
+      3600
+    ),
+    freshnessMaxSignalAgeSec15m: clamp(
+      Math.floor(
+        toFiniteNumber(raw.freshnessMaxSignalAgeSec15m, current.freshnessMaxSignalAgeSec15m)
+      ),
+      20,
+      7200
+    ),
+    freshnessMaxSignalAgeSecHourly: clamp(
+      Math.floor(
+        toFiniteNumber(raw.freshnessMaxSignalAgeSecHourly, current.freshnessMaxSignalAgeSecHourly)
+      ),
+      20,
+      14400
+    ),
+    freshnessMaxExecutionQuoteAgeSec5m: clamp(
+      Math.floor(
+        toFiniteNumber(
+          raw.freshnessMaxExecutionQuoteAgeSec5m,
+          current.freshnessMaxExecutionQuoteAgeSec5m
+        )
+      ),
+      0,
+      3600
+    ),
+    freshnessMaxExecutionQuoteAgeSec15m: clamp(
+      Math.floor(
+        toFiniteNumber(
+          raw.freshnessMaxExecutionQuoteAgeSec15m,
+          current.freshnessMaxExecutionQuoteAgeSec15m
+        )
+      ),
+      0,
+      7200
+    ),
+    freshnessMaxExecutionQuoteAgeSecHourly: clamp(
+      Math.floor(
+        toFiniteNumber(
+          raw.freshnessMaxExecutionQuoteAgeSecHourly,
+          current.freshnessMaxExecutionQuoteAgeSecHourly
+        )
+      ),
+      0,
+      14400
+    ),
+    paperRelaxFreshness: raw.paperRelaxFreshness === true,
+    paperFreshnessAgeMultiplier: clamp(
+      toFiniteNumber(raw.paperFreshnessAgeMultiplier, current.paperFreshnessAgeMultiplier),
+      1,
+      4
+    ),
+    dynamicSizingEnabled: raw.dynamicSizingEnabled !== false,
+    dynamicSizingMinScalePct: clamp(
+      toFiniteNumber(raw.dynamicSizingMinScalePct, current.dynamicSizingMinScalePct),
+      10,
+      200
+    ),
+    dynamicSizingMaxScalePct: clamp(
+      toFiniteNumber(raw.dynamicSizingMaxScalePct, current.dynamicSizingMaxScalePct),
+      20,
+      300
+    ),
+    dynamicSizingEdgeTargetCents: clamp(
+      toFiniteNumber(raw.dynamicSizingEdgeTargetCents, current.dynamicSizingEdgeTargetCents),
+      0.05,
+      20
+    ),
+    dynamicSizingLiquidityTradeCount: clamp(
+      Math.floor(
+        toFiniteNumber(raw.dynamicSizingLiquidityTradeCount, current.dynamicSizingLiquidityTradeCount)
+      ),
+      1,
+      200
+    ),
     pairLookbackSeconds: clamp(
       toFiniteNumber(raw.pairLookbackSeconds, current.pairLookbackSeconds),
       20,
@@ -602,10 +808,48 @@ function sanitizeConfig(
       1,
       20
     ),
+    reentryMaxEntriesPerSignal: clamp(
+      Math.floor(
+        toFiniteNumber(raw.reentryMaxEntriesPerSignal, current.reentryMaxEntriesPerSignal)
+      ),
+      1,
+      6
+    ),
+    reentryEdgeStepCents: clamp(
+      toFiniteNumber(raw.reentryEdgeStepCents, current.reentryEdgeStepCents),
+      0.01,
+      10
+    ),
     maxConditionExposureUsd: clamp(
       toFiniteNumber(raw.maxConditionExposureUsd, current.maxConditionExposureUsd),
       0,
       10000000
+    ),
+    maxCoinExposureSharePct: clamp(
+      toFiniteNumber(raw.maxCoinExposureSharePct, current.maxCoinExposureSharePct),
+      0,
+      100
+    ),
+    maxCadenceExposureSharePct: clamp(
+      toFiniteNumber(raw.maxCadenceExposureSharePct, current.maxCadenceExposureSharePct),
+      0,
+      100
+    ),
+    autoExitResidualPositions: raw.autoExitResidualPositions === true,
+    residualPositionMinUsd: clamp(
+      toFiniteNumber(raw.residualPositionMinUsd, current.residualPositionMinUsd),
+      0.1,
+      10000
+    ),
+    residualPositionMaxPerRun: clamp(
+      Math.floor(toFiniteNumber(raw.residualPositionMaxPerRun, current.residualPositionMaxPerRun)),
+      1,
+      20
+    ),
+    residualPositionSellDiscountCents: clamp(
+      toFiniteNumber(raw.residualPositionSellDiscountCents, current.residualPositionSellDiscountCents),
+      0,
+      25
     ),
     enableBtc: raw.enableBtc !== false,
     enableEth: raw.enableEth !== false,
@@ -717,15 +961,136 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.pairEstimatedSlippageCents ??
       c.estimatedSlippageCents ??
       DEFAULT_CONFIG.pairSlippageCents,
+    liveMinNetEdgeSurplusCents:
+      c.liveMinNetEdgeSurplusCents ??
+      c.liveMinEdgeSurplusCents ??
+      c.liveNetEdgeSurplusMinCents ??
+      DEFAULT_CONFIG.liveMinNetEdgeSurplusCents,
+    adaptiveEdgeEnabled: c.adaptiveEdgeEnabled,
+    adaptiveEdgeLowActivityTradeCount:
+      c.adaptiveEdgeLowActivityTradeCount ??
+      c.adaptiveEdgeMinTradeCount ??
+      c.adaptiveLowActivityTradeCount ??
+      DEFAULT_CONFIG.adaptiveEdgeLowActivityTradeCount,
+    adaptiveEdgeMaxPenaltyCents:
+      c.adaptiveEdgeMaxPenaltyCents ??
+      c.adaptiveEdgePenaltyCents ??
+      c.adaptiveLowLiquidityPenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeMaxPenaltyCents,
+    adaptiveEdgeStalePenaltyCents:
+      c.adaptiveEdgeStalePenaltyCents ??
+      c.adaptiveStalePenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCents,
+    adaptiveEdgeStalePenaltyCents5m:
+      c.adaptiveEdgeStalePenaltyCents5m ??
+      c.adaptiveStalePenaltyCents5m ??
+      c.adaptiveEdgeStalePenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCents5m,
+    adaptiveEdgeStalePenaltyCents15m:
+      c.adaptiveEdgeStalePenaltyCents15m ??
+      c.adaptiveStalePenaltyCents15m ??
+      c.adaptiveEdgeStalePenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCents15m,
+    adaptiveEdgeStalePenaltyCentsHourly:
+      c.adaptiveEdgeStalePenaltyCentsHourly ??
+      c.adaptiveStalePenaltyCentsHourly ??
+      c.adaptiveEdgeStalePenaltyCents ??
+      DEFAULT_CONFIG.adaptiveEdgeStalePenaltyCentsHourly,
+    freshnessMaxSignalAgeSec5m:
+      c.freshnessMaxSignalAgeSec5m ??
+      c.maxSignalAgeSec5m ??
+      DEFAULT_CONFIG.freshnessMaxSignalAgeSec5m,
+    freshnessMaxSignalAgeSec15m:
+      c.freshnessMaxSignalAgeSec15m ??
+      c.maxSignalAgeSec15m ??
+      DEFAULT_CONFIG.freshnessMaxSignalAgeSec15m,
+    freshnessMaxSignalAgeSecHourly:
+      c.freshnessMaxSignalAgeSecHourly ??
+      c.maxSignalAgeSecHourly ??
+      DEFAULT_CONFIG.freshnessMaxSignalAgeSecHourly,
+    freshnessMaxExecutionQuoteAgeSec5m:
+      c.freshnessMaxExecutionQuoteAgeSec5m ??
+      c.maxExecutionQuoteAgeSec5m ??
+      DEFAULT_CONFIG.freshnessMaxExecutionQuoteAgeSec5m,
+    freshnessMaxExecutionQuoteAgeSec15m:
+      c.freshnessMaxExecutionQuoteAgeSec15m ??
+      c.maxExecutionQuoteAgeSec15m ??
+      DEFAULT_CONFIG.freshnessMaxExecutionQuoteAgeSec15m,
+    freshnessMaxExecutionQuoteAgeSecHourly:
+      c.freshnessMaxExecutionQuoteAgeSecHourly ??
+      c.maxExecutionQuoteAgeSecHourly ??
+      DEFAULT_CONFIG.freshnessMaxExecutionQuoteAgeSecHourly,
+    paperRelaxFreshness:
+      c.paperRelaxFreshness ??
+      c.relaxFreshnessInPaper ??
+      DEFAULT_CONFIG.paperRelaxFreshness,
+    paperFreshnessAgeMultiplier:
+      c.paperFreshnessAgeMultiplier ??
+      c.freshnessPaperMultiplier ??
+      DEFAULT_CONFIG.paperFreshnessAgeMultiplier,
+    dynamicSizingEnabled: c.dynamicSizingEnabled,
+    dynamicSizingMinScalePct:
+      c.dynamicSizingMinScalePct ??
+      c.dynamicSizeMinPct ??
+      DEFAULT_CONFIG.dynamicSizingMinScalePct,
+    dynamicSizingMaxScalePct:
+      c.dynamicSizingMaxScalePct ??
+      c.dynamicSizeMaxPct ??
+      DEFAULT_CONFIG.dynamicSizingMaxScalePct,
+    dynamicSizingEdgeTargetCents:
+      c.dynamicSizingEdgeTargetCents ??
+      c.dynamicSizingTargetEdgeCents ??
+      DEFAULT_CONFIG.dynamicSizingEdgeTargetCents,
+    dynamicSizingLiquidityTradeCount:
+      c.dynamicSizingLiquidityTradeCount ??
+      c.dynamicSizingLiquidityTargetTrades ??
+      DEFAULT_CONFIG.dynamicSizingLiquidityTradeCount,
     pairLookbackSeconds:
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:
       c.pairMaxMarketsPerRun ?? c.maxSignalsPerRun ?? DEFAULT_CONFIG.pairMaxMarketsPerRun,
+    reentryMaxEntriesPerSignal:
+      c.reentryMaxEntriesPerSignal ??
+      c.maxEntriesPerSignal ??
+      c.reentrySlotsPerSignal ??
+      DEFAULT_CONFIG.reentryMaxEntriesPerSignal,
+    reentryEdgeStepCents:
+      c.reentryEdgeStepCents ??
+      c.reentryStepCents ??
+      c.reentryMinEdgeStepCents ??
+      DEFAULT_CONFIG.reentryEdgeStepCents,
     maxConditionExposureUsd:
       c.maxConditionExposureUsd ??
       c.maxConditionNotionalUsd ??
       c.maxPerConditionUsd ??
       DEFAULT_CONFIG.maxConditionExposureUsd,
+    maxCoinExposureSharePct:
+      c.maxCoinExposureSharePct ??
+      c.maxCoinBudgetSharePct ??
+      c.maxCoinSharePct ??
+      DEFAULT_CONFIG.maxCoinExposureSharePct,
+    maxCadenceExposureSharePct:
+      c.maxCadenceExposureSharePct ??
+      c.maxCadenceBudgetSharePct ??
+      c.maxCadenceSharePct ??
+      DEFAULT_CONFIG.maxCadenceExposureSharePct,
+    autoExitResidualPositions:
+      c.autoExitResidualPositions ??
+      c.enableAutoResidualExit ??
+      c.autoResidualExit ??
+      DEFAULT_CONFIG.autoExitResidualPositions,
+    residualPositionMinUsd:
+      c.residualPositionMinUsd ??
+      c.autoResidualExitMinUsd ??
+      DEFAULT_CONFIG.residualPositionMinUsd,
+    residualPositionMaxPerRun:
+      c.residualPositionMaxPerRun ??
+      c.autoResidualExitMaxPerRun ??
+      DEFAULT_CONFIG.residualPositionMaxPerRun,
+    residualPositionSellDiscountCents:
+      c.residualPositionSellDiscountCents ??
+      c.autoResidualExitSellDiscountCents ??
+      DEFAULT_CONFIG.residualPositionSellDiscountCents,
     enableBtc: c.enableBtc,
     enableEth: c.enableEth,
     enableCadence5m: c.enableCadence5m,
