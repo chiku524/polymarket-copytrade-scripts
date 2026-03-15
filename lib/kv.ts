@@ -252,6 +252,16 @@ export interface CopyTraderConfig {
   dynamicSizingEdgeTargetCents: number;
   /** Trade-count target used for dynamic sizing liquidity scaling */
   dynamicSizingLiquidityTradeCount: number;
+  /** Enable extra size scaling for high net-edge opportunities */
+  edgeBoostEnabled: boolean;
+  /** Net-edge threshold in cents where edge boost begins */
+  edgeBoostThresholdCents: number;
+  /** Net-edge threshold in cents where max edge boost is reached */
+  edgeBoostHighThresholdCents: number;
+  /** Size scale at lower edge-boost threshold (percent of pair chunk) */
+  edgeBoostScalePct: number;
+  /** Size scale at high edge-boost threshold (percent of pair chunk) */
+  edgeBoostHighScalePct: number;
   /** Recency window for global market signal discovery */
   pairLookbackSeconds: number;
   /** Maximum number of paired signals to execute per run */
@@ -460,6 +470,11 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   dynamicSizingMaxScalePct: 140,
   dynamicSizingEdgeTargetCents: 1,
   dynamicSizingLiquidityTradeCount: 12,
+  edgeBoostEnabled: false,
+  edgeBoostThresholdCents: 5,
+  edgeBoostHighThresholdCents: 10,
+  edgeBoostScalePct: 200,
+  edgeBoostHighScalePct: 500,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
   reentryMaxEntriesPerSignal: 2,
@@ -798,6 +813,30 @@ function sanitizeConfig(
       1,
       200
     ),
+    edgeBoostEnabled: raw.edgeBoostEnabled === true,
+    edgeBoostThresholdCents: clamp(
+      toFiniteNumber(raw.edgeBoostThresholdCents, current.edgeBoostThresholdCents),
+      0,
+      50
+    ),
+    edgeBoostHighThresholdCents: clamp(
+      toFiniteNumber(raw.edgeBoostHighThresholdCents, current.edgeBoostHighThresholdCents),
+      Math.min(
+        100,
+        Math.max(0, toFiniteNumber(raw.edgeBoostThresholdCents, current.edgeBoostThresholdCents))
+      ),
+      100
+    ),
+    edgeBoostScalePct: clamp(
+      toFiniteNumber(raw.edgeBoostScalePct, current.edgeBoostScalePct),
+      100,
+      5000
+    ),
+    edgeBoostHighScalePct: clamp(
+      toFiniteNumber(raw.edgeBoostHighScalePct, current.edgeBoostHighScalePct),
+      Math.min(5000, Math.max(100, toFiniteNumber(raw.edgeBoostScalePct, current.edgeBoostScalePct))),
+      5000
+    ),
     pairLookbackSeconds: clamp(
       toFiniteNumber(raw.pairLookbackSeconds, current.pairLookbackSeconds),
       20,
@@ -1045,6 +1084,27 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.dynamicSizingLiquidityTradeCount ??
       c.dynamicSizingLiquidityTargetTrades ??
       DEFAULT_CONFIG.dynamicSizingLiquidityTradeCount,
+    edgeBoostEnabled: c.edgeBoostEnabled ?? c.edgeSurgeEnabled ?? c.highEdgeSizingEnabled ?? false,
+    edgeBoostThresholdCents:
+      c.edgeBoostThresholdCents ??
+      c.edgeSurgeThresholdCents ??
+      c.highEdgeThresholdCents ??
+      DEFAULT_CONFIG.edgeBoostThresholdCents,
+    edgeBoostHighThresholdCents:
+      c.edgeBoostHighThresholdCents ??
+      c.edgeSurgeHighThresholdCents ??
+      c.highEdgeHighThresholdCents ??
+      DEFAULT_CONFIG.edgeBoostHighThresholdCents,
+    edgeBoostScalePct:
+      c.edgeBoostScalePct ??
+      c.edgeSurgeScalePct ??
+      c.highEdgeScalePct ??
+      DEFAULT_CONFIG.edgeBoostScalePct,
+    edgeBoostHighScalePct:
+      c.edgeBoostHighScalePct ??
+      c.edgeSurgeHighScalePct ??
+      c.highEdgeHighScalePct ??
+      DEFAULT_CONFIG.edgeBoostHighScalePct,
     pairLookbackSeconds:
       c.pairLookbackSeconds ?? c.signalLookbackSeconds ?? DEFAULT_CONFIG.pairLookbackSeconds,
     pairMaxMarketsPerRun:

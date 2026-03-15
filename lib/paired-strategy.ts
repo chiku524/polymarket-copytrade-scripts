@@ -506,6 +506,11 @@ export async function runPairedStrategy(
     dynamicSizingMaxScalePct: number;
     dynamicSizingEdgeTargetCents: number;
     dynamicSizingLiquidityTradeCount: number;
+    edgeBoostEnabled: boolean;
+    edgeBoostThresholdCents: number;
+    edgeBoostHighThresholdCents: number;
+    edgeBoostScalePct: number;
+    edgeBoostHighScalePct: number;
     pairLookbackSeconds: number;
     pairMaxMarketsPerRun: number;
     reentryMaxEntriesPerSignal: number;
@@ -663,6 +668,23 @@ export async function runPairedStrategy(
   const dynamicSizingLiquidityTradeCount = Math.max(
     1,
     Math.min(200, Math.floor(Number(config.dynamicSizingLiquidityTradeCount) || 1))
+  );
+  const edgeBoostEnabled = config.edgeBoostEnabled === true;
+  const edgeBoostThresholdCents = Math.max(
+    0,
+    Math.min(50, Number(config.edgeBoostThresholdCents) || 0)
+  );
+  const edgeBoostHighThresholdCents = Math.max(
+    edgeBoostThresholdCents,
+    Math.min(100, Number(config.edgeBoostHighThresholdCents) || edgeBoostThresholdCents)
+  );
+  const edgeBoostScale = Math.max(
+    1,
+    Math.min(50, (Number(config.edgeBoostScalePct) || 100) / 100)
+  );
+  const edgeBoostHighScale = Math.max(
+    edgeBoostScale,
+    Math.min(50, (Number(config.edgeBoostHighScalePct) || 100) / 100)
   );
   const maxCoinExposureSharePct = Math.max(
     0,
@@ -1090,7 +1112,17 @@ export async function runPairedStrategy(
       const dynamicSizingScale = dynamicSizingEnabled
         ? dynamicSizingMinScale + (dynamicSizingMaxScale - dynamicSizingMinScale) * dynamicSizingScore
         : 1;
-      const targetPairChunkUsd = pairChunkUsd * dynamicSizingScale;
+      const edgeBoostSizingScale = (() => {
+        if (!edgeBoostEnabled) return 1;
+        if (netEdgeCents < edgeBoostThresholdCents) return 1;
+        if (edgeBoostHighThresholdCents <= edgeBoostThresholdCents) return edgeBoostHighScale;
+        if (netEdgeCents >= edgeBoostHighThresholdCents) return edgeBoostHighScale;
+        const edgeProgress =
+          (netEdgeCents - edgeBoostThresholdCents) /
+          (edgeBoostHighThresholdCents - edgeBoostThresholdCents);
+        return edgeBoostScale + (edgeBoostHighScale - edgeBoostScale) * edgeProgress;
+      })();
+      const targetPairChunkUsd = pairChunkUsd * dynamicSizingScale * edgeBoostSizingScale;
       const coinExposureRemaining =
         maxCoinExposureSharePct > 0
           ? (runBudgetCapUsd * maxCoinExposureSharePct) / 100 - (coinExposureUsd[signal.coin] ?? 0)

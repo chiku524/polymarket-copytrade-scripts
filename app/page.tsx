@@ -110,6 +110,11 @@ interface Config {
   dynamicSizingMaxScalePct: number;
   dynamicSizingEdgeTargetCents: number;
   dynamicSizingLiquidityTradeCount: number;
+  edgeBoostEnabled: boolean;
+  edgeBoostThresholdCents: number;
+  edgeBoostHighThresholdCents: number;
+  edgeBoostScalePct: number;
+  edgeBoostHighScalePct: number;
   pairLookbackSeconds: number;
   pairMaxMarketsPerRun: number;
   reentryMaxEntriesPerSignal: number;
@@ -179,6 +184,11 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   dynamicSizingMaxScalePct: 150,
   dynamicSizingEdgeTargetCents: 1,
   dynamicSizingLiquidityTradeCount: 12,
+  edgeBoostEnabled: false,
+  edgeBoostThresholdCents: 5,
+  edgeBoostHighThresholdCents: 10,
+  edgeBoostScalePct: 200,
+  edgeBoostHighScalePct: 500,
   maxCoinExposureSharePct: 0,
   maxCadenceExposureSharePct: 0,
   autoExitResidualPositions: false,
@@ -229,6 +239,11 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   dynamicSizingMaxScalePct: 140,
   dynamicSizingEdgeTargetCents: 1,
   dynamicSizingLiquidityTradeCount: 12,
+  edgeBoostEnabled: false,
+  edgeBoostThresholdCents: 5,
+  edgeBoostHighThresholdCents: 10,
+  edgeBoostScalePct: 200,
+  edgeBoostHighScalePct: 500,
   pairLookbackSeconds: 600,
   pairMaxMarketsPerRun: 4,
   reentryMaxEntriesPerSignal: 2,
@@ -680,6 +695,11 @@ export default function Home() {
         dynamicSizingMaxScalePct: 140,
         dynamicSizingEdgeTargetCents: 1,
         dynamicSizingLiquidityTradeCount: 12,
+        edgeBoostEnabled: false,
+        edgeBoostThresholdCents: 5,
+        edgeBoostHighThresholdCents: 10,
+        edgeBoostScalePct: 200,
+        edgeBoostHighScalePct: 500,
         pairLookbackSeconds: 120,
         pairMaxMarketsPerRun: 4,
         reentryMaxEntriesPerSignal: 2,
@@ -779,6 +799,11 @@ export default function Home() {
     dynamicSizingMaxScalePct: 140,
     dynamicSizingEdgeTargetCents: 1,
     dynamicSizingLiquidityTradeCount: 12,
+    edgeBoostEnabled: false,
+    edgeBoostThresholdCents: 5,
+    edgeBoostHighThresholdCents: 10,
+    edgeBoostScalePct: 200,
+    edgeBoostHighScalePct: 500,
     pairLookbackSeconds: 120,
     pairMaxMarketsPerRun: 4,
     reentryMaxEntriesPerSignal: 2,
@@ -990,6 +1015,10 @@ export default function Home() {
   const dynamicSizingSummary = cfg.dynamicSizingEnabled
     ? `dynamic size ${cfg.dynamicSizingMinScalePct.toFixed(0)}-${cfg.dynamicSizingMaxScalePct.toFixed(0)}%`
     : "dynamic size off";
+  const edgeBoostSummary =
+    cfg.edgeBoostEnabled
+      ? `edge boost ${cfg.edgeBoostThresholdCents.toFixed(1)}¢→${cfg.edgeBoostHighThresholdCents.toFixed(1)}¢ @ ${cfg.edgeBoostScalePct.toFixed(0)}-${cfg.edgeBoostHighScalePct.toFixed(0)}%`
+      : "edge boost off";
   const guardrailSummary = `max imbalances ${cfg.maxUnresolvedImbalancesPerRun} · unwind slippage ${cfg.unwindSellSlippageCents.toFixed(1)}¢ · unwind buffer ${cfg.unwindShareBufferPct.toFixed(0)}%`;
   const dailyCapSummary = `notional cap ${
     cfg.maxDailyLiveNotionalUsd > 0 ? `$${cfg.maxDailyLiveNotionalUsd.toFixed(0)}` : "off"
@@ -1319,7 +1348,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
+                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {edgeBoostSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1654,6 +1683,25 @@ export default function Home() {
                   />
                 </button>
                 <p className="text-xs text-zinc-300 mr-3">Dynamic sizing</p>
+                <button
+                  role="switch"
+                  aria-checked={cfg.edgeBoostEnabled}
+                  onClick={() => updateConfig({ edgeBoostEnabled: !cfg.edgeBoostEnabled }, true)}
+                  disabled={saving}
+                  className={`
+                    relative w-11 h-6 rounded-full transition-colors flex-shrink-0
+                    ${cfg.edgeBoostEnabled ? "bg-fuchsia-500" : "bg-zinc-700"}
+                    ${saving ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                  `}
+                >
+                  <span
+                    className={`
+                      absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform
+                      ${cfg.edgeBoostEnabled ? "left-6 translate-x-[-2px]" : "left-1"}
+                    `}
+                  />
+                </button>
+                <p className="text-xs text-zinc-300 mr-3">Edge boost sizing</p>
                 <div>
                   <p className="text-xs text-zinc-500 mb-1">Low-activity trades</p>
                   <input
@@ -2006,6 +2054,86 @@ export default function Home() {
                     disabled={saving}
                     className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
                   />
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Edge boost start/high (¢)</p>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      step={0.1}
+                      value={cfg.edgeBoostThresholdCents}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "edgeBoostThresholdCents",
+                          parseFloat(e.target.value) || 0,
+                          0,
+                          50
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.1}
+                      value={cfg.edgeBoostHighThresholdCents}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "edgeBoostHighThresholdCents",
+                          parseFloat(e.target.value) || 0,
+                          0,
+                          100
+                        )
+                      }
+                      disabled={saving}
+                      className="w-16 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Edge boost scale start/high (%)</p>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={100}
+                      max={5000}
+                      step={10}
+                      value={cfg.edgeBoostScalePct}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "edgeBoostScalePct",
+                          parseFloat(e.target.value) || 100,
+                          100,
+                          5000
+                        )
+                      }
+                      disabled={saving}
+                      className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                    <span className="text-zinc-500">/</span>
+                    <input
+                      type="number"
+                      min={100}
+                      max={5000}
+                      step={10}
+                      value={cfg.edgeBoostHighScalePct}
+                      onChange={(e) =>
+                        handleNumericConfigChange(
+                          "edgeBoostHighScalePct",
+                          parseFloat(e.target.value) || 100,
+                          100,
+                          5000
+                        )
+                      }
+                      disabled={saving}
+                      className="w-20 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
