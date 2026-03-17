@@ -926,6 +926,8 @@ export default function Home() {
       : 0;
   const avgExecutedEdgeCents = Number(paperStats.avgExecutedEdgeCents ?? 0);
   const avgExecutedNetEdgeCents = Number(paperStats.avgExecutedNetEdgeCents ?? 0);
+  const expectedPnlUsd =
+    paperStats.totalBudgetUsedUsd > 0 ? (paperStats.totalBudgetUsedUsd * avgExecutedNetEdgeCents) / 100 : 0;
   const paperTotalPnlUsd = Number(paperLedgerSummary.totalPnlUsd ?? 0);
   const paperRealizedPnlUsd = Number(paperLedgerSummary.realizedPnlUsd ?? 0);
   const paperUnrealizedPnlUsd = Number(paperLedgerSummary.unrealizedPnlUsd ?? 0);
@@ -2760,7 +2762,7 @@ export default function Home() {
               {resettingPaperStats ? "Resetting…" : "Reset paper stats"}
             </button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-9 gap-3 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-3 mb-4">
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
               <p className="text-[11px] text-zinc-500 uppercase">Runs</p>
               <p className="text-lg font-semibold text-zinc-200">{paperStats.totalRuns}</p>
@@ -2790,6 +2792,12 @@ export default function Home() {
               </p>
             </div>
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Expected PnL (EV)</p>
+              <p className={`text-lg font-semibold ${expectedPnlUsd >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                {paperStats.totalSimulatedTrades > 0 ? `$${expectedPnlUsd.toFixed(2)}` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
               <p className="text-[11px] text-zinc-500 uppercase">Realized PnL</p>
               <p className={`text-lg font-semibold ${paperRealizedPnlUsd >= 0 ? "text-emerald-300" : "text-red-300"}`}>
                 {paperLedgerSummary.settledLots > 0 ? `$${paperRealizedPnlUsd.toFixed(2)}` : "—"}
@@ -2813,6 +2821,9 @@ export default function Home() {
             {paperStats.lastRunAt ? ` · Last paper run: ${new Date(paperStats.lastRunAt).toLocaleString()}` : ""}
             {paperLedgerSummary.totalLots > 0
               ? ` · Open lots ${paperLedgerSummary.openLots} · Settled lots ${paperLedgerSummary.settledLots}`
+              : ""}
+            {paperStats.totalSimulatedTrades > 0
+              ? ` · EV uses budget × avg net edge (${avgExecutedNetEdgeCents.toFixed(2)}¢)`
               : ""}
           </p>
           {paperStats.lastError && (
