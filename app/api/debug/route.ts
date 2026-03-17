@@ -32,7 +32,10 @@ export async function GET(request: Request) {
     const state = stateResult.value;
 
     const walletUsagePercent = config?.walletUsagePercent ?? 0;
-    const walletRunCapUsd = (cashBalance * walletUsagePercent) / 100;
+    const paperVirtualWalletUsd = Math.max(0, Number(config?.paperVirtualWalletUsd ?? 0));
+    const budgetWalletBalanceUsd =
+      config?.mode === "paper" && paperVirtualWalletUsd > 0 ? paperVirtualWalletUsd : cashBalance;
+    const walletRunCapUsd = (budgetWalletBalanceUsd * walletUsagePercent) / 100;
     const maxRunBudgetUsd = Math.max(0, Number(config?.maxRunBudgetUsd ?? 0));
     const effectiveRunCapUsd =
       maxRunBudgetUsd > 0 ? Math.min(walletRunCapUsd, maxRunBudgetUsd) : walletRunCapUsd;
@@ -84,6 +87,8 @@ export async function GET(request: Request) {
         hints: [cronHint].filter(Boolean),
         walletBudget: {
           walletUsagePercent,
+          budgetWalletBalanceUsd,
+          paperVirtualWalletUsd,
           runCapUsd: walletRunCapUsd,
           maxRunBudgetUsd,
           effectiveRunCapUsd,

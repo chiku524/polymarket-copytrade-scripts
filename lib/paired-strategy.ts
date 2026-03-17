@@ -474,6 +474,7 @@ export async function runPairedStrategy(
     walletUsagePercent: number;
     pairChunkUsd: number;
     maxRunBudgetUsd: number;
+    paperVirtualWalletUsd: number;
     minBetUsd: number;
     stopLossBalance: number;
     floorToPolymarketMin: boolean;
@@ -564,7 +565,10 @@ export async function runPairedStrategy(
 
   const cashBalance = await getCashBalance(myAddress);
   const walletUsagePercent = Math.max(1, Math.min(100, Number(config.walletUsagePercent) || 100));
-  const walletRunCapUsd = (cashBalance * walletUsagePercent) / 100;
+  const paperVirtualWalletUsd = Math.max(0, Number(config.paperVirtualWalletUsd) || 0);
+  const budgetWalletBalanceUsd =
+    mode === "paper" && paperVirtualWalletUsd > 0 ? paperVirtualWalletUsd : cashBalance;
+  const walletRunCapUsd = (budgetWalletBalanceUsd * walletUsagePercent) / 100;
   const configuredRunBudgetUsd = Math.max(0, Number(config.maxRunBudgetUsd) || 0);
   const runBudgetCapUsd =
     configuredRunBudgetUsd > 0 ? Math.min(walletRunCapUsd, configuredRunBudgetUsd) : walletRunCapUsd;

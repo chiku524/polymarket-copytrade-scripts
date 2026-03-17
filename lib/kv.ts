@@ -196,6 +196,8 @@ export interface CopyTraderConfig {
   pairChunkUsd: number;
   /** Hard cap per run in USD (0 = disabled; uses wallet % cap only) */
   maxRunBudgetUsd: number;
+  /** Paper-only virtual wallet balance override in USD (0 = disabled; use real wallet balance) */
+  paperVirtualWalletUsd: number;
   /** Minimum required edge in cents (1 - (pA + pB)) */
   pairMinEdgeCents: number;
   /** Paper-only override toggle allowing negative-edge simulations */
@@ -482,6 +484,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   maxBetUsd: 3,
   pairChunkUsd: 3,
   maxRunBudgetUsd: 0,
+  paperVirtualWalletUsd: 0,
   pairMinEdgeCents: 0.5,
   paperAllowNegativeEdge: false,
   paperMinEdgeCents: -0.2,
@@ -822,6 +825,11 @@ function sanitizeConfig(
       0,
       10000000
     ),
+    paperVirtualWalletUsd: clamp(
+      toFiniteNumber(raw.paperVirtualWalletUsd, current.paperVirtualWalletUsd),
+      0,
+      10000000
+    ),
     pairMinEdgeCents: clamp(
       toFiniteNumber(raw.pairMinEdgeCents, current.pairMinEdgeCents),
       0,
@@ -1130,6 +1138,13 @@ export async function getConfig(): Promise<CopyTraderConfig> {
     pairChunkUsd: c.pairChunkUsd ?? c.maxBetUsd ?? DEFAULT_CONFIG.pairChunkUsd,
     maxRunBudgetUsd:
       c.maxRunBudgetUsd ?? c.runBudgetUsd ?? c.maxRunUsd ?? c.fixedRunBudgetUsd ?? 0,
+    paperVirtualWalletUsd:
+      c.paperVirtualWalletUsd ??
+      c.paperWalletUsd ??
+      c.paperWalletBalanceUsd ??
+      c.paperVirtualBalanceUsd ??
+      c.simulatedWalletUsd ??
+      0,
     pairMinEdgeCents: c.pairMinEdgeCents ?? DEFAULT_CONFIG.pairMinEdgeCents,
     paperAllowNegativeEdge:
       c.paperAllowNegativeEdge ?? c.allowNegativeEdgeInPaper ?? c.paperAllowNegEdge ?? false,

@@ -81,6 +81,7 @@ interface Config {
   walletUsagePercent: number;
   pairChunkUsd: number;
   maxRunBudgetUsd: number;
+  paperVirtualWalletUsd: number;
   pairMinEdgeCents: number;
   paperAllowNegativeEdge: boolean;
   paperMinEdgeCents: number;
@@ -150,6 +151,7 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   walletUsagePercent: 100,
   pairChunkUsd: 1,
   maxRunBudgetUsd: 0,
+  paperVirtualWalletUsd: 0,
   pairLookbackSeconds: 300,
   pairMaxMarketsPerRun: 20,
   reentryMaxEntriesPerSignal: 4,
@@ -210,6 +212,7 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   walletUsagePercent: 25,
   pairChunkUsd: 3,
   maxRunBudgetUsd: 0,
+  paperVirtualWalletUsd: 0,
   pairMinEdgeCents: 0.5,
   paperAllowNegativeEdge: false,
   paperMinEdgeCents: -0.2,
@@ -717,6 +720,7 @@ export default function Home() {
         walletUsagePercent: 25,
         pairChunkUsd: 3,
         maxRunBudgetUsd: 0,
+        paperVirtualWalletUsd: 0,
         pairMinEdgeCents: 0.5,
         paperAllowNegativeEdge: false,
         paperMinEdgeCents: -0.2,
@@ -821,6 +825,7 @@ export default function Home() {
     walletUsagePercent: 25,
     pairChunkUsd: 3,
     maxRunBudgetUsd: 0,
+    paperVirtualWalletUsd: 0,
     pairMinEdgeCents: 0.5,
     paperAllowNegativeEdge: false,
     paperMinEdgeCents: -0.2,
@@ -1104,6 +1109,10 @@ export default function Home() {
       : "auto-stop off";
   const runBudgetSummary =
     cfg.maxRunBudgetUsd > 0 ? `$${cfg.maxRunBudgetUsd.toFixed(2)} fixed cap` : `${cfg.walletUsagePercent}% wallet cap`;
+  const paperVirtualWalletSummary =
+    cfg.mode === "paper" && cfg.paperVirtualWalletUsd > 0
+      ? `paper virtual wallet $${cfg.paperVirtualWalletUsd.toFixed(2)}`
+      : "paper virtual wallet off";
   const conditionExposureSummary =
     cfg.maxConditionExposureUsd > 0
       ? `$${cfg.maxConditionExposureUsd.toFixed(2)} / condition`
@@ -1417,7 +1426,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {edgeBoostSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
+                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {paperVirtualWalletSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {edgeBoostSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1648,6 +1657,26 @@ export default function Home() {
                 }
                 disabled={saving}
                 className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Paper virtual wallet ($)</p>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cfg.paperVirtualWalletUsd || ""}
+                placeholder="0 = use real wallet"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "paperVirtualWalletUsd",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    10000000
+                  )
+                }
+                disabled={saving}
+                className="w-32 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
             </div>
             <div>

@@ -193,6 +193,7 @@ async function runCopyTradeHandler() {
         walletUsagePercent: config.walletUsagePercent,
         pairChunkUsd: config.pairChunkUsd,
         maxRunBudgetUsd: config.maxRunBudgetUsd,
+        paperVirtualWalletUsd: config.paperVirtualWalletUsd,
         minBetUsd: config.minBetUsd,
         stopLossBalance: config.stopLossBalance ?? 0,
         floorToPolymarketMin: config.floorToPolymarketMin !== false,
