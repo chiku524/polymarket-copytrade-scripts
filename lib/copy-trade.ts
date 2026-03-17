@@ -33,6 +33,14 @@ export interface CopiedTrade {
   price: number;
   asset: string;
   timestamp: number;
+  conditionId?: string;
+  slug?: string;
+  coin?: "BTC" | "ETH";
+  cadence?: "5m" | "15m" | "hourly" | "other";
+  edgeCentsAtEntry?: number;
+  netEdgeCentsAtEntry?: number;
+  dynamicSizingScalePct?: number;
+  edgeBoostScalePct?: number;
 }
 
 export async function sellPosition(

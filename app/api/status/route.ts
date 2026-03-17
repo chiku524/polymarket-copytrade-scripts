@@ -7,6 +7,7 @@ import {
   getStrategyDiagnosticsHistory,
 } from "@/lib/kv";
 import { getCashBalance } from "@/lib/copy-trade";
+import { getPaperLedgerSnapshot } from "@/lib/paper-ledger";
 
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
 
@@ -15,7 +16,11 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    const [config, state, cashBalance, recentActivity, paperStats, strategyDiagnosticsHistory] =
+    const paperLedgerPromise = getPaperLedgerSnapshot().catch((e) => {
+      console.error("Paper ledger snapshot error:", e);
+      return undefined;
+    });
+    const [config, state, cashBalance, recentActivity, paperStats, strategyDiagnosticsHistory, paperLedger] =
       await Promise.all([
       getConfig(),
       getState(),
@@ -23,6 +28,7 @@ export async function GET() {
       getRecentActivity(),
       getPaperStats(),
       getStrategyDiagnosticsHistory(),
+      paperLedgerPromise,
     ]);
     return NextResponse.json(
       {
@@ -43,6 +49,7 @@ export async function GET() {
         recentActivity,
         paperStats,
         strategyDiagnosticsHistory,
+        paperLedger,
       },
       { headers: { "Cache-Control": "no-store, no-cache, max-age=0" } }
     );

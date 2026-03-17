@@ -8,6 +8,7 @@ import {
   acquireRunLock,
   releaseRunLock,
   recordPaperRun,
+  recordPaperTrades,
   recordStrategyDiagnostics,
 } from "@/lib/kv";
 import { runPairedStrategy } from "@/lib/paired-strategy";
@@ -340,6 +341,9 @@ export async function POST() {
     await recordStrategyDiagnostics(diagnostics);
     if (result.copiedTrades?.length) {
       await appendActivity(result.copiedTrades);
+      if (result.mode === "paper") {
+        await recordPaperTrades(result.copiedTrades);
+      }
     }
     if (result.mode === "paper") {
       await recordPaperRun({

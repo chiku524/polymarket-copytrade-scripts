@@ -853,6 +853,8 @@ export async function runPairedStrategy(
               amountUsd: shareAmount * Math.max(0.01, Number(p.curPrice)),
               price: Math.max(0.01, Number(p.curPrice)),
               asset: p.asset,
+              conditionId: p.conditionId,
+              slug: p.slug,
               timestamp: Date.now(),
             });
           } else {
@@ -1229,6 +1231,14 @@ export async function runPairedStrategy(
           amountUsd: legAUsd,
           price: outcomeA.price,
           asset: outcomeA.asset,
+          conditionId: signal.conditionId,
+          slug: signal.slug,
+          coin: signal.coin,
+          cadence: signal.cadence,
+          edgeCentsAtEntry: signal.edge * 100,
+          netEdgeCentsAtEntry: netEdgeCents,
+          dynamicSizingScalePct: dynamicSizingScale * 100,
+          edgeBoostScalePct: edgeBoostSizingScale * 100,
           timestamp: Date.now(),
         });
         result.copiedTrades.push({
@@ -1238,6 +1248,14 @@ export async function runPairedStrategy(
           amountUsd: legBUsd,
           price: outcomeB.price,
           asset: outcomeB.asset,
+          conditionId: signal.conditionId,
+          slug: signal.slug,
+          coin: signal.coin,
+          cadence: signal.cadence,
+          edgeCentsAtEntry: signal.edge * 100,
+          netEdgeCentsAtEntry: netEdgeCents,
+          dynamicSizingScalePct: dynamicSizingScale * 100,
+          edgeBoostScalePct: edgeBoostSizingScale * 100,
           timestamp: Date.now(),
         });
         continue;
@@ -1270,6 +1288,14 @@ export async function runPairedStrategy(
           amountUsd: legAUsd,
           price: outcomeA.price,
           asset: outcomeA.asset,
+          conditionId: signal.conditionId,
+          slug: signal.slug,
+          coin: signal.coin,
+          cadence: signal.cadence,
+          edgeCentsAtEntry: signal.edge * 100,
+          netEdgeCentsAtEntry: netEdgeCents,
+          dynamicSizingScalePct: dynamicSizingScale * 100,
+          edgeBoostScalePct: edgeBoostSizingScale * 100,
           timestamp: Date.now(),
         });
         result.copiedTrades.push({
@@ -1279,6 +1305,14 @@ export async function runPairedStrategy(
           amountUsd: legBUsd,
           price: outcomeB.price,
           asset: outcomeB.asset,
+          conditionId: signal.conditionId,
+          slug: signal.slug,
+          coin: signal.coin,
+          cadence: signal.cadence,
+          edgeCentsAtEntry: signal.edge * 100,
+          netEdgeCentsAtEntry: netEdgeCents,
+          dynamicSizingScalePct: dynamicSizingScale * 100,
+          edgeBoostScalePct: edgeBoostSizingScale * 100,
           timestamp: Date.now(),
         });
       };

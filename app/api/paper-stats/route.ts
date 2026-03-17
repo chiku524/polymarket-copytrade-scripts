@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPaperStats, resetPaperStats } from "@/lib/kv";
+import { getPaperStats, resetPaperLedger, resetPaperStats } from "@/lib/kv";
 
 export async function GET() {
   try {
@@ -16,7 +16,7 @@ export async function GET() {
 
 export async function DELETE() {
   try {
-    await resetPaperStats();
+    await Promise.all([resetPaperStats(), resetPaperLedger()]);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("Paper stats reset error:", e);

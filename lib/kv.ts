@@ -1,5 +1,6 @@
 import Redis from "ioredis";
 import { randomUUID } from "crypto";
+import type { CopiedTrade } from "@/lib/copy-trade";
 
 interface KvSetOptions {
   nx?: boolean;
@@ -177,6 +178,7 @@ const STATE_KEY = "copy_trader_state";
 const ACTIVITY_KEY = "copy_trader_activity";
 const RUN_LOCK_KEY = "copy_trader_run_lock";
 const PAPER_STATS_KEY = "copy_trader_paper_stats";
+const PAPER_LEDGER_KEY = "copy_trader_paper_ledger";
 const STRATEGY_DIAGNOSTICS_HISTORY_KEY = "copy_trader_strategy_diagnostics_history";
 
 export type TradingMode = "off" | "paper" | "live";
@@ -402,6 +404,15 @@ export interface RecentActivity {
   amountUsd: number;
   price: number;
   timestamp: number;
+  asset?: string;
+  conditionId?: string;
+  slug?: string;
+  coin?: "BTC" | "ETH";
+  cadence?: "5m" | "15m" | "hourly" | "other";
+  edgeCentsAtEntry?: number;
+  netEdgeCentsAtEntry?: number;
+  dynamicSizingScalePct?: number;
+  edgeBoostScalePct?: number;
 }
 
 export interface PaperRunStat {
@@ -432,6 +443,36 @@ export interface PaperStats {
   lastRunAt?: number;
   lastError?: string;
   recentRuns: PaperRunStat[];
+}
+
+export interface PaperLedgerLot {
+  id: string;
+  title: string;
+  outcome: string;
+  side: string;
+  amountUsd: number;
+  price: number;
+  shares: number;
+  asset: string;
+  conditionId: string;
+  timestamp: number;
+  slug?: string;
+  coin?: "BTC" | "ETH";
+  cadence?: "5m" | "15m" | "hourly" | "other";
+  edgeCentsAtEntry?: number;
+  netEdgeCentsAtEntry?: number;
+  dynamicSizingScalePct?: number;
+  edgeBoostScalePct?: number;
+  settledAt?: number;
+  settledPrice?: number;
+  settledWinner?: boolean;
+  realizedPnlUsd?: number;
+}
+
+export interface PaperLedger {
+  lots: PaperLedgerLot[];
+  lastUpdatedAt?: number;
+  lastSettledAt?: number;
 }
 
 const DEFAULT_CONFIG: CopyTraderConfig = {
@@ -518,6 +559,12 @@ const DEFAULT_PAPER_STATS: PaperStats = {
   recentRuns: [],
 };
 
+const DEFAULT_PAPER_LEDGER: PaperLedger = {
+  lots: [],
+};
+const MAX_ACTIVITY_ITEMS = 50;
+const MAX_PAPER_LEDGER_LOTS = 4000;
+
 const DEFAULT_STRATEGY_DIAGNOSTICS_HISTORY: StrategyDiagnosticsHistory = {
   totalRuns: 0,
   recentRuns: [],
@@ -567,6 +614,119 @@ function normalizeRejectedReasons(value: unknown): Record<string, number> {
     result[key] = count;
   }
   return result;
+}
+
+function normalizeCadence(value: unknown): "5m" | "15m" | "hourly" | "other" | undefined {
+  return value === "5m" || value === "15m" || value === "hourly" || value === "other"
+    ? value
+    : undefined;
+}
+
+function normalizeRecentActivity(value: unknown): RecentActivity | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const title = String(raw.title ?? "").trim();
+  const outcome = String(raw.outcome ?? "").trim();
+  const side = String(raw.side ?? "").trim();
+  const amountUsd = Math.max(0, toFiniteNumber(raw.amountUsd, 0));
+  const price = Math.max(0, toFiniteNumber(raw.price, 0));
+  const timestamp = Math.max(0, toFiniteNumber(raw.timestamp, Date.now()));
+  if (!title || !outcome || !side || amountUsd <= 0 || price <= 0) return null;
+  const conditionId = String(raw.conditionId ?? "").trim() || undefined;
+  const slug = String(raw.slug ?? "").trim() || undefined;
+  const asset = String(raw.asset ?? "").trim() || undefined;
+  const coinRaw = String(raw.coin ?? "").toUpperCase();
+  const coin = coinRaw === "BTC" || coinRaw === "ETH" ? coinRaw : undefined;
+  return {
+    title,
+    outcome,
+    side,
+    amountUsd,
+    price,
+    timestamp,
+    asset,
+    conditionId,
+    slug,
+    coin,
+    cadence: normalizeCadence(raw.cadence),
+    edgeCentsAtEntry:
+      typeof raw.edgeCentsAtEntry === "number" ? toFiniteNumber(raw.edgeCentsAtEntry, 0) : undefined,
+    netEdgeCentsAtEntry:
+      typeof raw.netEdgeCentsAtEntry === "number"
+        ? toFiniteNumber(raw.netEdgeCentsAtEntry, 0)
+        : undefined,
+    dynamicSizingScalePct:
+      typeof raw.dynamicSizingScalePct === "number"
+        ? toFiniteNumber(raw.dynamicSizingScalePct, 0)
+        : undefined,
+    edgeBoostScalePct:
+      typeof raw.edgeBoostScalePct === "number"
+        ? toFiniteNumber(raw.edgeBoostScalePct, 0)
+        : undefined,
+  };
+}
+
+function normalizePaperLedgerLot(value: unknown): PaperLedgerLot | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const id = String(raw.id ?? "").trim();
+  const title = String(raw.title ?? "").trim();
+  const outcome = String(raw.outcome ?? "").trim();
+  const side = String(raw.side ?? "").trim();
+  const asset = String(raw.asset ?? "").trim();
+  const conditionId = String(raw.conditionId ?? "").trim();
+  const timestamp = Math.max(0, toFiniteNumber(raw.timestamp, Date.now()));
+  const amountUsd = Math.max(0, toFiniteNumber(raw.amountUsd, 0));
+  const price = Math.max(0, toFiniteNumber(raw.price, 0));
+  const shares = Math.max(0, toFiniteNumber(raw.shares, amountUsd > 0 && price > 0 ? amountUsd / price : 0));
+  if (!id || !title || !outcome || !side || !asset || !conditionId || amountUsd <= 0 || price <= 0) {
+    return null;
+  }
+  const coinRaw = String(raw.coin ?? "").toUpperCase();
+  const coin = coinRaw === "BTC" || coinRaw === "ETH" ? coinRaw : undefined;
+  const settledAt =
+    typeof raw.settledAt === "number" ? Math.max(0, toFiniteNumber(raw.settledAt, Date.now())) : undefined;
+  const settledPrice =
+    typeof raw.settledPrice === "number" ? Math.max(0, toFiniteNumber(raw.settledPrice, 0)) : undefined;
+  return {
+    id,
+    title,
+    outcome,
+    side,
+    amountUsd,
+    price,
+    shares,
+    asset,
+    conditionId,
+    timestamp,
+    slug: String(raw.slug ?? "").trim() || undefined,
+    coin,
+    cadence: normalizeCadence(raw.cadence),
+    edgeCentsAtEntry:
+      typeof raw.edgeCentsAtEntry === "number" ? toFiniteNumber(raw.edgeCentsAtEntry, 0) : undefined,
+    netEdgeCentsAtEntry:
+      typeof raw.netEdgeCentsAtEntry === "number"
+        ? toFiniteNumber(raw.netEdgeCentsAtEntry, 0)
+        : undefined,
+    dynamicSizingScalePct:
+      typeof raw.dynamicSizingScalePct === "number"
+        ? toFiniteNumber(raw.dynamicSizingScalePct, 0)
+        : undefined,
+    edgeBoostScalePct:
+      typeof raw.edgeBoostScalePct === "number"
+        ? toFiniteNumber(raw.edgeBoostScalePct, 0)
+        : undefined,
+    settledAt,
+    settledPrice,
+    settledWinner:
+      typeof raw.settledWinner === "boolean"
+        ? raw.settledWinner
+        : typeof settledPrice === "number"
+          ? settledPrice >= 0.5
+          : undefined,
+    realizedPnlUsd:
+      typeof raw.realizedPnlUsd === "number" ? toFiniteNumber(raw.realizedPnlUsd, 0) : undefined,
+  };
 }
 
 function normalizeSafetyLatch(value: unknown): SafetyLatchState | undefined {
@@ -1249,14 +1409,111 @@ export async function resetSyncState(): Promise<void> {
 
 export async function getRecentActivity(): Promise<RecentActivity[]> {
   const a = await kv.get<RecentActivity[]>(ACTIVITY_KEY);
-  return Array.isArray(a) ? a : [];
+  if (!Array.isArray(a)) return [];
+  return a
+    .map((entry) => normalizeRecentActivity(entry))
+    .filter((entry): entry is RecentActivity => Boolean(entry))
+    .slice(0, MAX_ACTIVITY_ITEMS);
 }
 
 export async function appendActivity(trades: RecentActivity[]): Promise<void> {
   if (trades.length === 0) return;
+  const normalizedIncoming = trades
+    .map((trade) => normalizeRecentActivity(trade))
+    .filter((trade): trade is RecentActivity => Boolean(trade));
+  if (normalizedIncoming.length === 0) return;
   const current = await getRecentActivity();
-  const updated = [...trades, ...current].slice(0, 50);
+  const updated = [...normalizedIncoming, ...current].slice(0, MAX_ACTIVITY_ITEMS);
   await kv.set(ACTIVITY_KEY, updated);
+}
+
+export async function getPaperLedger(): Promise<PaperLedger> {
+  const stored = await kv.get<PaperLedger>(PAPER_LEDGER_KEY);
+  if (!stored || !Array.isArray(stored.lots)) return { ...DEFAULT_PAPER_LEDGER };
+  return {
+    lastUpdatedAt:
+      typeof stored.lastUpdatedAt === "number" ? toFiniteNumber(stored.lastUpdatedAt, Date.now()) : undefined,
+    lastSettledAt:
+      typeof stored.lastSettledAt === "number" ? toFiniteNumber(stored.lastSettledAt, Date.now()) : undefined,
+    lots: stored.lots
+      .map((lot) => normalizePaperLedgerLot(lot))
+      .filter((lot): lot is PaperLedgerLot => Boolean(lot))
+      .slice(0, MAX_PAPER_LEDGER_LOTS),
+  };
+}
+
+export async function setPaperLedger(ledger: PaperLedger): Promise<void> {
+  const normalizedLots = (Array.isArray(ledger.lots) ? ledger.lots : [])
+    .map((lot) => normalizePaperLedgerLot(lot))
+    .filter((lot): lot is PaperLedgerLot => Boolean(lot))
+    .slice(0, MAX_PAPER_LEDGER_LOTS);
+  await kv.set(PAPER_LEDGER_KEY, {
+    lots: normalizedLots,
+    lastUpdatedAt:
+      typeof ledger.lastUpdatedAt === "number" ? toFiniteNumber(ledger.lastUpdatedAt, Date.now()) : Date.now(),
+    lastSettledAt:
+      typeof ledger.lastSettledAt === "number" ? toFiniteNumber(ledger.lastSettledAt, Date.now()) : undefined,
+  });
+}
+
+export async function recordPaperTrades(trades: CopiedTrade[]): Promise<PaperLedger> {
+  if (!Array.isArray(trades) || trades.length === 0) return getPaperLedger();
+  const lots = trades
+    .filter((trade) => typeof trade.side === "string" && trade.side.startsWith("PAPER BUY"))
+    .map((trade): PaperLedgerLot | null => {
+      const amountUsd = Math.max(0, toFiniteNumber(trade.amountUsd, 0));
+      const price = Math.max(0, toFiniteNumber(trade.price, 0));
+      const conditionId = String(trade.conditionId ?? "").trim();
+      const asset = String(trade.asset ?? "").trim();
+      const title = String(trade.title ?? "").trim();
+      const outcome = String(trade.outcome ?? "").trim();
+      if (amountUsd <= 0 || price <= 0 || !conditionId || !asset || !title || !outcome) return null;
+      const shares = amountUsd / price;
+      const coin = trade.coin === "BTC" || trade.coin === "ETH" ? trade.coin : undefined;
+      return {
+        id: randomUUID(),
+        title,
+        outcome,
+        side: trade.side,
+        amountUsd,
+        price,
+        shares,
+        asset,
+        conditionId,
+        timestamp: Math.max(0, toFiniteNumber(trade.timestamp, Date.now())),
+        slug: String(trade.slug ?? "").trim() || undefined,
+        coin,
+        cadence: normalizeCadence(trade.cadence),
+        edgeCentsAtEntry:
+          typeof trade.edgeCentsAtEntry === "number" ? toFiniteNumber(trade.edgeCentsAtEntry, 0) : undefined,
+        netEdgeCentsAtEntry:
+          typeof trade.netEdgeCentsAtEntry === "number"
+            ? toFiniteNumber(trade.netEdgeCentsAtEntry, 0)
+            : undefined,
+        dynamicSizingScalePct:
+          typeof trade.dynamicSizingScalePct === "number"
+            ? toFiniteNumber(trade.dynamicSizingScalePct, 0)
+            : undefined,
+        edgeBoostScalePct:
+          typeof trade.edgeBoostScalePct === "number"
+            ? toFiniteNumber(trade.edgeBoostScalePct, 0)
+            : undefined,
+      };
+    })
+    .filter((lot): lot is PaperLedgerLot => Boolean(lot));
+  if (lots.length === 0) return getPaperLedger();
+  const current = await getPaperLedger();
+  const updated: PaperLedger = {
+    lots: [...lots, ...current.lots].slice(0, MAX_PAPER_LEDGER_LOTS),
+    lastUpdatedAt: Date.now(),
+    lastSettledAt: current.lastSettledAt,
+  };
+  await kv.set(PAPER_LEDGER_KEY, updated);
+  return updated;
+}
+
+export async function resetPaperLedger(): Promise<void> {
+  await kv.set(PAPER_LEDGER_KEY, { ...DEFAULT_PAPER_LEDGER });
 }
 
 export async function getPaperStats(): Promise<PaperStats> {

@@ -340,7 +340,20 @@ interface Status {
     };
   };
   cashBalance: number;
-  recentActivity: { title: string; outcome: string; side: string; amountUsd: number; price: number; timestamp: number }[];
+  recentActivity: {
+    title: string;
+    outcome: string;
+    side: string;
+    amountUsd: number;
+    price: number;
+    timestamp: number;
+    edgeCentsAtEntry?: number;
+    netEdgeCentsAtEntry?: number;
+    dynamicSizingScalePct?: number;
+    edgeBoostScalePct?: number;
+    coin?: "BTC" | "ETH";
+    cadence?: "5m" | "15m" | "hourly" | "other";
+  }[];
   paperStats?: {
     totalRuns: number;
     totalSimulatedTrades: number;
@@ -366,6 +379,44 @@ interface Status {
       avgExecutedEdgeCents?: number;
       avgExecutedNetEdgeCents?: number;
       error?: string;
+    }[];
+  };
+  paperLedger?: {
+    summary: {
+      totalLots: number;
+      openLots: number;
+      settledLots: number;
+      totalStakedUsd: number;
+      openCostUsd: number;
+      openMarkValueUsd: number;
+      unrealizedPnlUsd: number;
+      realizedPnlUsd: number;
+      totalPnlUsd: number;
+      lastEntryAt?: number;
+      lastSettledAt?: number;
+    };
+    recentLots: {
+      id: string;
+      title: string;
+      outcome: string;
+      side: string;
+      amountUsd: number;
+      price: number;
+      shares: number;
+      asset: string;
+      conditionId: string;
+      timestamp: number;
+      slug?: string;
+      coin?: "BTC" | "ETH";
+      cadence?: "5m" | "15m" | "hourly" | "other";
+      edgeCentsAtEntry?: number;
+      netEdgeCentsAtEntry?: number;
+      dynamicSizingScalePct?: number;
+      edgeBoostScalePct?: number;
+      settledAt?: number;
+      settledPrice?: number;
+      settledWinner?: boolean;
+      realizedPnlUsd?: number;
     }[];
   };
   strategyDiagnosticsHistory?: {
@@ -847,6 +898,21 @@ export default function Home() {
     avgExecutedNetEdgeCents: 0,
     recentRuns: [],
   };
+  const paperLedger = status?.paperLedger ?? {
+    summary: {
+      totalLots: 0,
+      openLots: 0,
+      settledLots: 0,
+      totalStakedUsd: 0,
+      openCostUsd: 0,
+      openMarkValueUsd: 0,
+      unrealizedPnlUsd: 0,
+      realizedPnlUsd: 0,
+      totalPnlUsd: 0,
+    },
+    recentLots: [],
+  };
+  const paperLedgerSummary = paperLedger.summary;
   const avgTradesPerRun =
     paperStats.totalRuns > 0 ? paperStats.totalSimulatedTrades / paperStats.totalRuns : 0;
   const avgBudgetUsagePct =
@@ -855,6 +921,9 @@ export default function Home() {
       : 0;
   const avgExecutedEdgeCents = Number(paperStats.avgExecutedEdgeCents ?? 0);
   const avgExecutedNetEdgeCents = Number(paperStats.avgExecutedNetEdgeCents ?? 0);
+  const paperTotalPnlUsd = Number(paperLedgerSummary.totalPnlUsd ?? 0);
+  const paperRealizedPnlUsd = Number(paperLedgerSummary.realizedPnlUsd ?? 0);
+  const paperUnrealizedPnlUsd = Number(paperLedgerSummary.unrealizedPnlUsd ?? 0);
   const lastDiag = status?.state.lastStrategyDiagnostics;
   const rejectedEntries = Object.entries(lastDiag?.rejectedReasons ?? {}).sort(
     (a, b) => b[1] - a[1]
@@ -2662,7 +2731,7 @@ export default function Home() {
               {resettingPaperStats ? "Resetting…" : "Reset paper stats"}
             </button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-9 gap-3 mb-4">
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
               <p className="text-[11px] text-zinc-500 uppercase">Runs</p>
               <p className="text-lg font-semibold text-zinc-200">{paperStats.totalRuns}</p>
@@ -2691,13 +2760,81 @@ export default function Home() {
                 {paperStats.totalSimulatedTrades > 0 ? `${avgExecutedNetEdgeCents.toFixed(2)}¢` : "—"}
               </p>
             </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Realized PnL</p>
+              <p className={`text-lg font-semibold ${paperRealizedPnlUsd >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                {paperLedgerSummary.settledLots > 0 ? `$${paperRealizedPnlUsd.toFixed(2)}` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Unrealized PnL</p>
+              <p className={`text-lg font-semibold ${paperUnrealizedPnlUsd >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                {paperLedgerSummary.openLots > 0 ? `$${paperUnrealizedPnlUsd.toFixed(2)}` : "—"}
+              </p>
+            </div>
+            <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3">
+              <p className="text-[11px] text-zinc-500 uppercase">Total paper PnL</p>
+              <p className={`text-lg font-semibold ${paperTotalPnlUsd >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                {paperLedgerSummary.totalLots > 0 ? `$${paperTotalPnlUsd.toFixed(2)}` : "—"}
+              </p>
+            </div>
           </div>
           <p className="text-xs text-zinc-500">
             Avg pairs/run: {avgTradesPerRun.toFixed(2)} · Failed runs: {paperStats.totalFailed}
             {paperStats.lastRunAt ? ` · Last paper run: ${new Date(paperStats.lastRunAt).toLocaleString()}` : ""}
+            {paperLedgerSummary.totalLots > 0
+              ? ` · Open lots ${paperLedgerSummary.openLots} · Settled lots ${paperLedgerSummary.settledLots}`
+              : ""}
           </p>
           {paperStats.lastError && (
             <p className="text-xs text-red-400 mt-1">{paperStats.lastError}</p>
+          )}
+        </section>
+
+        <section className="mb-6 p-5 rounded-xl bg-zinc-900/40 border border-zinc-800/40">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">
+            Paper lot ledger (entry edge + outcome)
+          </h2>
+          {paperLedger.recentLots.length > 0 ? (
+            <div className="space-y-2 max-h-[28rem] overflow-y-auto pr-1">
+              {paperLedger.recentLots.slice(0, 25).map((lot) => {
+                const pnl = typeof lot.realizedPnlUsd === "number" ? lot.realizedPnlUsd : 0;
+                const pnlClass = pnl >= 0 ? "text-emerald-300" : "text-red-300";
+                const settled = typeof lot.settledAt === "number";
+                return (
+                  <div
+                    key={lot.id}
+                    className="rounded-md bg-zinc-900/70 border border-zinc-800 px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-zinc-200">
+                        {lot.coin ? `${lot.coin} ` : ""}
+                        {lot.cadence ? `${lot.cadence} ` : ""}
+                        {lot.outcome} · ${lot.amountUsd.toFixed(2)} @ {(lot.price * 100).toFixed(1)}¢
+                      </p>
+                      <p className="text-[11px] text-zinc-500">
+                        {new Date(lot.timestamp).toLocaleString()}
+                      </p>
+                    </div>
+                    <p className="text-[11px] text-zinc-500 mt-1">
+                      {lot.edgeCentsAtEntry != null ? `edge ${lot.edgeCentsAtEntry.toFixed(2)}¢` : "edge —"} ·{" "}
+                      {lot.netEdgeCentsAtEntry != null ? `net ${lot.netEdgeCentsAtEntry.toFixed(2)}¢` : "net —"} ·{" "}
+                      dyn {lot.dynamicSizingScalePct != null ? `${lot.dynamicSizingScalePct.toFixed(0)}%` : "—"} · boost{" "}
+                      {lot.edgeBoostScalePct != null ? `${lot.edgeBoostScalePct.toFixed(0)}%` : "—"}
+                    </p>
+                    <p className={`text-[11px] mt-1 ${pnlClass}`}>
+                      {settled
+                        ? `Settled ${(lot.settledPrice ?? 0) >= 0.5 ? "WIN" : "LOSS"} · Realized ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`
+                        : "Open lot · Waiting for market resolution"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-600">
+              No paper lots yet. Run a few paper cycles to populate entry-level edge tracking.
+            </p>
           )}
         </section>
 
@@ -3101,6 +3238,14 @@ export default function Home() {
                     <p className="text-xs text-zinc-500">
                       {a.side} {a.outcome} · ${a.amountUsd.toFixed(2)} @ {(a.price * 100).toFixed(0)}¢
                     </p>
+                    {(a.edgeCentsAtEntry != null || a.netEdgeCentsAtEntry != null) && (
+                      <p className="text-[11px] text-zinc-600 mt-0.5">
+                        {a.edgeCentsAtEntry != null ? `edge ${a.edgeCentsAtEntry.toFixed(2)}¢` : "edge —"} ·{" "}
+                        {a.netEdgeCentsAtEntry != null ? `net ${a.netEdgeCentsAtEntry.toFixed(2)}¢` : "net —"} ·{" "}
+                        dyn {a.dynamicSizingScalePct != null ? `${a.dynamicSizingScalePct.toFixed(0)}%` : "—"} · boost{" "}
+                        {a.edgeBoostScalePct != null ? `${a.edgeBoostScalePct.toFixed(0)}%` : "—"}
+                      </p>
+                    )}
                   </div>
                   <span className="text-xs text-zinc-500">
                     {new Date(a.timestamp).toLocaleTimeString()}
