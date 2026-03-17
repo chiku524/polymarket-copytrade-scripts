@@ -475,6 +475,7 @@ export async function runPairedStrategy(
     pairChunkUsd: number;
     maxRunBudgetUsd: number;
     paperVirtualWalletUsd: number;
+    capitalReservePercent: number;
     minBetUsd: number;
     stopLossBalance: number;
     floorToPolymarketMin: boolean;
@@ -566,9 +567,12 @@ export async function runPairedStrategy(
   const cashBalance = await getCashBalance(myAddress);
   const walletUsagePercent = Math.max(1, Math.min(100, Number(config.walletUsagePercent) || 100));
   const paperVirtualWalletUsd = Math.max(0, Number(config.paperVirtualWalletUsd) || 0);
+  const capitalReservePercent = Math.max(0, Math.min(95, Number(config.capitalReservePercent) || 0));
   const budgetWalletBalanceUsd =
     mode === "paper" && paperVirtualWalletUsd > 0 ? paperVirtualWalletUsd : cashBalance;
-  const walletRunCapUsd = (budgetWalletBalanceUsd * walletUsagePercent) / 100;
+  const reservedCashUsd = (budgetWalletBalanceUsd * capitalReservePercent) / 100;
+  const allocatableBalanceUsd = Math.max(0, budgetWalletBalanceUsd - reservedCashUsd);
+  const walletRunCapUsd = (allocatableBalanceUsd * walletUsagePercent) / 100;
   const configuredRunBudgetUsd = Math.max(0, Number(config.maxRunBudgetUsd) || 0);
   const runBudgetCapUsd =
     configuredRunBudgetUsd > 0 ? Math.min(walletRunCapUsd, configuredRunBudgetUsd) : walletRunCapUsd;
@@ -586,8 +590,8 @@ export async function runPairedStrategy(
   if (mode === "live" && runBudgetCapUsd < POLYMARKET_MIN_ORDER_USD * 2) {
     const capReason =
       configuredRunBudgetUsd > 0
-        ? `effective run cap $${runBudgetCapUsd.toFixed(2)} (wallet cap $${walletRunCapUsd.toFixed(2)}, fixed cap $${configuredRunBudgetUsd.toFixed(2)})`
-        : `${walletUsagePercent.toFixed(1)}% wallet cap of $${cashBalance.toFixed(2)} is $${runBudgetCapUsd.toFixed(2)}`;
+        ? `effective run cap $${runBudgetCapUsd.toFixed(2)} (wallet cap $${walletRunCapUsd.toFixed(2)}, reserve ${capitalReservePercent.toFixed(1)}%, fixed cap $${configuredRunBudgetUsd.toFixed(2)})`
+        : `${walletUsagePercent.toFixed(1)}% of allocatable wallet $${allocatableBalanceUsd.toFixed(2)} (reserve ${capitalReservePercent.toFixed(1)}%) is $${runBudgetCapUsd.toFixed(2)}`;
     result.error = `Run budget too low: ${capReason} (< $2 for paired leg minimums)`;
     return result;
   }

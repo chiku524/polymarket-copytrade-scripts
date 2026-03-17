@@ -33,9 +33,12 @@ export async function GET(request: Request) {
 
     const walletUsagePercent = config?.walletUsagePercent ?? 0;
     const paperVirtualWalletUsd = Math.max(0, Number(config?.paperVirtualWalletUsd ?? 0));
+    const capitalReservePercent = Math.max(0, Number(config?.capitalReservePercent ?? 0));
     const budgetWalletBalanceUsd =
       config?.mode === "paper" && paperVirtualWalletUsd > 0 ? paperVirtualWalletUsd : cashBalance;
-    const walletRunCapUsd = (budgetWalletBalanceUsd * walletUsagePercent) / 100;
+    const reservedCashUsd = (budgetWalletBalanceUsd * capitalReservePercent) / 100;
+    const allocatableBalanceUsd = Math.max(0, budgetWalletBalanceUsd - reservedCashUsd);
+    const walletRunCapUsd = (allocatableBalanceUsd * walletUsagePercent) / 100;
     const maxRunBudgetUsd = Math.max(0, Number(config?.maxRunBudgetUsd ?? 0));
     const effectiveRunCapUsd =
       maxRunBudgetUsd > 0 ? Math.min(walletRunCapUsd, maxRunBudgetUsd) : walletRunCapUsd;
@@ -88,6 +91,9 @@ export async function GET(request: Request) {
         walletBudget: {
           walletUsagePercent,
           budgetWalletBalanceUsd,
+          allocatableBalanceUsd,
+          capitalReservePercent,
+          reservedCashUsd,
           paperVirtualWalletUsd,
           runCapUsd: walletRunCapUsd,
           maxRunBudgetUsd,

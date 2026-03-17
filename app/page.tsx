@@ -82,6 +82,7 @@ interface Config {
   pairChunkUsd: number;
   maxRunBudgetUsd: number;
   paperVirtualWalletUsd: number;
+  capitalReservePercent: number;
   pairMinEdgeCents: number;
   paperAllowNegativeEdge: boolean;
   paperMinEdgeCents: number;
@@ -152,6 +153,7 @@ const PAPER_HIGH_DATA_PRESET: Partial<Config> = {
   pairChunkUsd: 1,
   maxRunBudgetUsd: 0,
   paperVirtualWalletUsd: 0,
+  capitalReservePercent: 0,
   pairLookbackSeconds: 300,
   pairMaxMarketsPerRun: 20,
   reentryMaxEntriesPerSignal: 4,
@@ -213,6 +215,7 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   pairChunkUsd: 3,
   maxRunBudgetUsd: 0,
   paperVirtualWalletUsd: 0,
+  capitalReservePercent: 0,
   pairMinEdgeCents: 0.5,
   paperAllowNegativeEdge: false,
   paperMinEdgeCents: -0.2,
@@ -721,6 +724,7 @@ export default function Home() {
         pairChunkUsd: 3,
         maxRunBudgetUsd: 0,
         paperVirtualWalletUsd: 0,
+        capitalReservePercent: 0,
         pairMinEdgeCents: 0.5,
         paperAllowNegativeEdge: false,
         paperMinEdgeCents: -0.2,
@@ -826,6 +830,7 @@ export default function Home() {
     pairChunkUsd: 3,
     maxRunBudgetUsd: 0,
     paperVirtualWalletUsd: 0,
+    capitalReservePercent: 0,
     pairMinEdgeCents: 0.5,
     paperAllowNegativeEdge: false,
     paperMinEdgeCents: -0.2,
@@ -1111,6 +1116,10 @@ export default function Home() {
       : "auto-stop off";
   const runBudgetSummary =
     cfg.maxRunBudgetUsd > 0 ? `$${cfg.maxRunBudgetUsd.toFixed(2)} fixed cap` : `${cfg.walletUsagePercent}% wallet cap`;
+  const capitalReserveSummary =
+    cfg.capitalReservePercent > 0
+      ? `capital reserve ${cfg.capitalReservePercent.toFixed(0)}%`
+      : "capital reserve off";
   const paperVirtualWalletSummary =
     cfg.mode === "paper" && cfg.paperVirtualWalletUsd > 0
       ? `paper virtual wallet $${cfg.paperVirtualWalletUsd.toFixed(2)}`
@@ -1428,7 +1437,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {paperVirtualWalletSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {edgeBoostSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
+                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {capitalReserveSummary} · {paperVirtualWalletSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {edgeBoostSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1655,6 +1664,27 @@ export default function Home() {
                     parseFloat(e.target.value) || 0,
                     0,
                     1000000
+                  )
+                }
+                disabled={saving}
+                className="w-28 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
+              />
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Capital reserve (%)</p>
+              <input
+                type="number"
+                min={0}
+                max={95}
+                step={1}
+                value={cfg.capitalReservePercent || ""}
+                placeholder="0 = off"
+                onChange={(e) =>
+                  handleNumericConfigChange(
+                    "capitalReservePercent",
+                    parseFloat(e.target.value) || 0,
+                    0,
+                    95
                   )
                 }
                 disabled={saving}
