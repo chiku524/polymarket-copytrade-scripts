@@ -143,6 +143,8 @@ interface Config {
   maxDailyLiveNotionalUsd: number;
   maxDailyDrawdownUsd: number;
   autoStopAt: number;
+  autoClaimEnabled: boolean;
+  autoClaimEveryRuns: number;
   sessionTargetPairsPerHour: number;
   sessionMinAvgNetEdgeCents: number;
 }
@@ -276,6 +278,8 @@ const LOW_LEVEL_DEFAULT_PRESET: Config = {
   maxDailyLiveNotionalUsd: 0,
   maxDailyDrawdownUsd: 0,
   autoStopAt: 0,
+  autoClaimEnabled: true,
+  autoClaimEveryRuns: 10,
   sessionTargetPairsPerHour: 0,
   sessionMinAvgNetEdgeCents: 0,
 };
@@ -784,6 +788,8 @@ export default function Home() {
         maxDailyLiveNotionalUsd: 0,
         maxDailyDrawdownUsd: 0,
         autoStopAt: 0,
+        autoClaimEnabled: true,
+        autoClaimEveryRuns: 10,
         sessionTargetPairsPerHour: 0,
         sessionMinAvgNetEdgeCents: 0,
       };
@@ -891,6 +897,8 @@ export default function Home() {
     maxDailyLiveNotionalUsd: 0,
     maxDailyDrawdownUsd: 0,
     autoStopAt: 0,
+    autoClaimEnabled: true,
+    autoClaimEveryRuns: 10,
     sessionTargetPairsPerHour: 0,
     sessionMinAvgNetEdgeCents: 0,
   };
@@ -1114,6 +1122,9 @@ export default function Home() {
         ? `auto-stop in ~${timerRemainingMinutes}m`
         : "timer expired (next cycle will switch off)"
       : "auto-stop off";
+  const autoClaimSummary = cfg.autoClaimEnabled
+    ? `auto-claim every ${Math.max(1, Math.floor(cfg.autoClaimEveryRuns || 1))} runs`
+    : "auto-claim off";
   const runBudgetSummary =
     cfg.maxRunBudgetUsd > 0 ? `$${cfg.maxRunBudgetUsd.toFixed(2)} fixed cap` : `${cfg.walletUsagePercent}% wallet cap`;
   const capitalReserveSummary =
@@ -1437,7 +1448,7 @@ export default function Home() {
             </div>
           </div>
           <p className="text-xs text-zinc-500 mb-5">
-                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {capitalReserveSummary} · {paperVirtualWalletSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {edgeBoostSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {runTimerSummary}
+                {selectedCoins} · {selectedCadences} · ${cfg.pairChunkUsd}/pair · {runBudgetSummary} · {capitalReserveSummary} · {paperVirtualWalletSummary} · {conditionExposureSummary} · {concentrationSummary} · {reentrySummary} · {edgeQualitySummary} · {freshnessSummary} · {adaptiveSummary} · {dynamicSizingSummary} · {edgeBoostSummary} · {lifecycleSummary} · {sessionTargetSummary} · {paperEdgeSummary} · {autoClaimSummary} · {runTimerSummary}
           </p>
           <div className="mb-5 rounded-lg bg-zinc-900/70 border border-zinc-800 p-3">
             <p className="text-[11px] text-zinc-500 uppercase mb-2">Run timer (auto-stop)</p>
@@ -1710,6 +1721,44 @@ export default function Home() {
                 disabled={saving}
                 className="w-32 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60 placeholder:text-zinc-500"
               />
+            </div>
+            <div className="col-span-2 md:col-span-1">
+              <p className="text-xs text-zinc-500 mb-1">Auto-claim (live)</p>
+              <div className="flex items-center gap-2">
+                <button
+                  role="switch"
+                  aria-checked={cfg.autoClaimEnabled}
+                  onClick={() => updateConfig({ autoClaimEnabled: !cfg.autoClaimEnabled }, true)}
+                  disabled={saving}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
+                    cfg.autoClaimEnabled ? "bg-sky-500" : "bg-zinc-700"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      cfg.autoClaimEnabled ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  step={1}
+                  value={cfg.autoClaimEveryRuns || 10}
+                  onChange={(e) =>
+                    handleNumericConfigChange(
+                      "autoClaimEveryRuns",
+                      parseInt(e.target.value, 10) || 10,
+                      1,
+                      500
+                    )
+                  }
+                  disabled={saving || !cfg.autoClaimEnabled}
+                  className="w-24 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm disabled:opacity-60"
+                />
+                <span className="text-xs text-zinc-500">runs</span>
+              </div>
             </div>
             <div>
               <p className="text-xs text-zinc-500 mb-1">Condition cap ($)</p>
@@ -3482,7 +3531,11 @@ export default function Home() {
           )}
           </p>
           {status?.state.runsSinceLastClaim != null && (
-            <span className="block mt-0.5 text-zinc-600">Claim runs every 10 strategy runs ({status.state.runsSinceLastClaim}/10)</span>
+            <span className="block mt-0.5 text-zinc-600">
+              {cfg.autoClaimEnabled
+                ? `Claim runs every ${Math.max(1, Math.floor(cfg.autoClaimEveryRuns || 1))} strategy runs (${status.state.runsSinceLastClaim}/${Math.max(1, Math.floor(cfg.autoClaimEveryRuns || 1))})`
+                : "Auto-claim disabled"}
+            </span>
           )}
           {status?.state.lastError && (
             <span className="block mt-1 text-red-400">{status.state.lastError}</span>

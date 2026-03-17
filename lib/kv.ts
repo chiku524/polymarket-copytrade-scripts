@@ -318,6 +318,10 @@ export interface CopyTraderConfig {
   maxDailyDrawdownUsd: number;
   /** Auto-stop timestamp in ms epoch (0 = disabled) */
   autoStopAt: number;
+  /** Enable periodic automatic claim attempts after live runs */
+  autoClaimEnabled: boolean;
+  /** Live runs between automatic claim attempts (>=1) */
+  autoClaimEveryRuns: number;
   /** Target executed pairs per hour for session pacing (0 = disabled) */
   sessionTargetPairsPerHour: number;
   /** Target minimum session average net edge in cents (0 = disabled) */
@@ -547,6 +551,8 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   maxDailyLiveNotionalUsd: 0,
   maxDailyDrawdownUsd: 0,
   autoStopAt: 0,
+  autoClaimEnabled: true,
+  autoClaimEveryRuns: 10,
   sessionTargetPairsPerHour: 0,
   sessionMinAvgNetEdgeCents: 0,
 };
@@ -1110,6 +1116,12 @@ function sanitizeConfig(
       0,
       4102444800000 // year 2100-01-01 UTC
     ),
+    autoClaimEnabled: raw.autoClaimEnabled !== false,
+    autoClaimEveryRuns: clamp(
+      Math.floor(toFiniteNumber(raw.autoClaimEveryRuns, current.autoClaimEveryRuns)),
+      1,
+      500
+    ),
     sessionTargetPairsPerHour: clamp(
       toFiniteNumber(raw.sessionTargetPairsPerHour, current.sessionTargetPairsPerHour),
       0,
@@ -1373,6 +1385,14 @@ export async function getConfig(): Promise<CopyTraderConfig> {
       c.maxDailyLossUsd ??
       DEFAULT_CONFIG.maxDailyDrawdownUsd,
     autoStopAt: c.autoStopAt ?? c.runUntilTs ?? c.runUntilAt ?? c.autoPauseAt ?? 0,
+    autoClaimEnabled:
+      c.autoClaimEnabled ?? c.claimEnabled ?? c.enableAutoClaim ?? c.autoRedeemEnabled ?? true,
+    autoClaimEveryRuns:
+      c.autoClaimEveryRuns ??
+      c.claimEveryRuns ??
+      c.autoRedeemEveryRuns ??
+      c.claimIntervalRuns ??
+      DEFAULT_CONFIG.autoClaimEveryRuns,
     sessionTargetPairsPerHour:
       c.sessionTargetPairsPerHour ??
       c.sessionPairsPerHourTarget ??

@@ -27,7 +27,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
 const SIGNATURE_TYPE = parseInt(process.env.SIGNATURE_TYPE ?? "1", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
-const CLAIM_EVERY_N_RUNS = Math.max(1, parseInt(process.env.CLAIM_EVERY_N_RUNS ?? "10", 10));
+const CLAIM_EVERY_N_RUNS_DEFAULT = Math.max(1, parseInt(process.env.CLAIM_EVERY_N_RUNS ?? "10", 10));
 const LATCH_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
 export const maxDuration = 90;
@@ -256,8 +256,12 @@ async function runCopyTradeHandler() {
     );
 
     const isLive = config.mode === "live";
+    const autoClaimEveryRuns = Math.max(
+      1,
+      Math.floor(Number(config.autoClaimEveryRuns) || CLAIM_EVERY_N_RUNS_DEFAULT)
+    );
     const runsSinceLastClaim = isLive ? (state.runsSinceLastClaim ?? 0) + 1 : state.runsSinceLastClaim ?? 0;
-    const shouldClaim = isLive && runsSinceLastClaim >= CLAIM_EVERY_N_RUNS;
+    const shouldClaim = isLive && config.autoClaimEnabled !== false && runsSinceLastClaim >= autoClaimEveryRuns;
 
     const diagnostics = {
       mode: result.mode,
