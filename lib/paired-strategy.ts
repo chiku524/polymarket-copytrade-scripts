@@ -1325,16 +1325,120 @@ export async function runPairedStrategy(
         });
       };
 
+      type LiveLegPlan = {
+        label: "A" | "B";
+        outcome: OutcomeSnapshot;
+        amountUsd: number;
+        quotePrice: number;
+        buyPrice: number;
+        precheckDepthUsd?: number;
+        liquidityScore?: number;
+      };
+
+      const toFinite = (value: unknown): number => {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      const extractOrderbookAsks = (book: unknown): Array<{ price: number; size: number }> => {
+        if (!book || typeof book !== "object") return [];
+        const b = book as {
+          asks?: unknown[];
+          data?: { asks?: unknown[] };
+          orderbook?: { asks?: unknown[] };
+        };
+        const asksRaw = Array.isArray(b.asks)
+          ? b.asks
+          : Array.isArray(b.data?.asks)
+            ? b.data.asks
+            : Array.isArray(b.orderbook?.asks)
+              ? b.orderbook.asks
+              : [];
+        return asksRaw
+          .map((level) => {
+            if (Array.isArray(level)) {
+              return {
+                price: toFinite(level[0]),
+                size: toFinite(level[1]),
+              };
+            }
+            if (!level || typeof level !== "object") {
+              return null;
+            }
+            const l = level as {
+              price?: unknown;
+              size?: unknown;
+              quantity?: unknown;
+              amount?: unknown;
+              shares?: unknown;
+            };
+            return {
+              price: toFinite(l.price),
+              size: toFinite(l.size ?? l.quantity ?? l.amount ?? l.shares),
+            };
+          })
+          .filter((x): x is { price: number; size: number } => !!x && x.price > 0 && x.size > 0)
+          .sort((a, b) => a.price - b.price);
+      };
+
+      const estimateBuyDepthUsd = (asks: Array<{ price: number; size: number }>, maxPrice: number): number => {
+        const capPrice = Math.max(0.001, Math.min(0.999, maxPrice));
+        let depthUsd = 0;
+        for (const level of asks) {
+          if (level.price > capPrice + 1e-9) break;
+          depthUsd += level.size * level.price;
+        }
+        return depthUsd;
+      };
+
+      const precheckLiveLeg = async (
+        leg: LiveLegPlan
+      ): Promise<{ ok: boolean; reason?: string; depthUsd?: number; error?: string }> => {
+        try {
+          const maybeBookClient = client as unknown as { getOrderBook?: (tokenId: string) => Promise<unknown> };
+          if (typeof maybeBookClient.getOrderBook !== "function") {
+            return {
+              ok: false,
+              reason: "live_orderbook_precheck_unavailable",
+              error: "Orderbook precheck unavailable on client",
+            };
+          }
+          const book = await maybeBookClient.getOrderBook(leg.outcome.asset);
+          const asks = extractOrderbookAsks(book);
+          if (asks.length === 0) {
+            return {
+              ok: false,
+              reason: "live_orderbook_precheck_empty",
+              error: `No asks found for ${leg.outcome.asset}`,
+            };
+          }
+          const depthUsd = estimateBuyDepthUsd(asks, leg.buyPrice);
+          const requiredUsd = leg.amountUsd * 1.02;
+          if (depthUsd < requiredUsd) {
+            return {
+              ok: false,
+              reason: "live_orderbook_precheck_insufficient_depth",
+              depthUsd,
+              error: `Depth $${depthUsd.toFixed(2)} < required $${requiredUsd.toFixed(2)} for leg ${leg.label}`,
+            };
+          }
+          return { ok: true, depthUsd };
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          return {
+            ok: false,
+            reason: "live_orderbook_precheck_failed",
+            error: message,
+          };
+        }
+      };
+
       const placeBuyLeg = async (
         tokenID: string,
         amountUsd: number,
-        quotePrice: number
+        buyPrice: number
       ): Promise<{ ok: boolean; error: string }> => {
         try {
-          const buyPrice = Math.max(
-            0.001,
-            Math.min(0.999, quotePrice + dynamicBuyPriceBuffer)
-          );
           const resp = await client.createAndPostMarketOrder(
             {
               tokenID,
@@ -1377,40 +1481,112 @@ export async function runPairedStrategy(
         }
       };
 
-      const legA = await placeBuyLeg(outcomeA.asset, legAUsd, outcomeA.price);
-      if (!legA.ok) {
-        result.failed++;
-        reject("live_leg_a_rejected");
-        result.error = clipError(result.error, legA.error || "Leg A rejected");
+      const legAPlan: LiveLegPlan = {
+        label: "A",
+        outcome: outcomeA,
+        amountUsd: legAUsd,
+        quotePrice: outcomeA.price,
+        buyPrice: Math.max(0.001, Math.min(0.999, outcomeA.price + dynamicBuyPriceBuffer)),
+      };
+      const legBPlan: LiveLegPlan = {
+        label: "B",
+        outcome: outcomeB,
+        amountUsd: legBUsd,
+        quotePrice: outcomeB.price,
+        buyPrice: Math.max(0.001, Math.min(0.999, outcomeB.price + dynamicBuyPriceBuffer)),
+      };
+
+      const [legAPrecheck, legBPrecheck] = await Promise.all([
+        precheckLiveLeg(legAPlan),
+        precheckLiveLeg(legBPlan),
+      ]);
+      if (!legAPrecheck.ok || !legBPrecheck.ok) {
+        if (!legAPrecheck.ok) {
+          reject(legAPrecheck.reason ?? "live_orderbook_precheck_failed");
+          result.error = clipError(
+            result.error,
+            `Precheck leg A failed: ${legAPrecheck.error ?? "unknown"}`
+          );
+        }
+        if (!legBPrecheck.ok) {
+          reject(legBPrecheck.reason ?? "live_orderbook_precheck_failed");
+          result.error = clipError(
+            result.error,
+            `Precheck leg B failed: ${legBPrecheck.error ?? "unknown"}`
+          );
+        }
         break;
       }
 
-      const legB = await placeBuyLeg(outcomeB.asset, legBUsd, outcomeB.price);
-      if (legB.ok) {
+      legAPlan.precheckDepthUsd = legAPrecheck.depthUsd;
+      legBPlan.precheckDepthUsd = legBPrecheck.depthUsd;
+      legAPlan.liquidityScore =
+        (legAPlan.precheckDepthUsd ?? 0) / Math.max(0.01, legAPlan.amountUsd);
+      legBPlan.liquidityScore =
+        (legBPlan.precheckDepthUsd ?? 0) / Math.max(0.01, legBPlan.amountUsd);
+
+      // Harder leg first: lower liquidity score and larger notional are prioritized.
+      const executionOrder = [legAPlan, legBPlan].sort((left, right) => {
+        const leftScore = left.liquidityScore ?? 0;
+        const rightScore = right.liquidityScore ?? 0;
+        if (leftScore !== rightScore) return leftScore - rightScore;
+        return right.amountUsd - left.amountUsd;
+      });
+      const [firstLeg, secondLeg] = executionOrder;
+
+      const [firstResult, secondResult] = await Promise.all([
+        placeBuyLeg(firstLeg.outcome.asset, firstLeg.amountUsd, firstLeg.buyPrice),
+        placeBuyLeg(secondLeg.outcome.asset, secondLeg.amountUsd, secondLeg.buyPrice),
+      ]);
+      const legResultsByLabel = new Map<"A" | "B", { ok: boolean; error: string }>([
+        [firstLeg.label, firstResult],
+        [secondLeg.label, secondResult],
+      ]);
+      const legAResult = legResultsByLabel.get("A") ?? { ok: false, error: "Missing leg A result" };
+      const legBResult = legResultsByLabel.get("B") ?? { ok: false, error: "Missing leg B result" };
+
+      if (legAResult.ok && legBResult.ok) {
         recordLivePair();
         continue;
       }
 
+      if (!legAResult.ok && !legBResult.ok) {
+        result.failed++;
+        reject("live_both_legs_rejected");
+        result.error = clipError(
+          result.error,
+          `Both legs rejected (A: ${legAResult.error}; B: ${legBResult.error})`
+        );
+        break;
+      }
+
       reject("live_partial_fill_detected");
-      const retryB = await placeBuyLeg(outcomeB.asset, legBUsd, outcomeB.price);
-      if (retryB.ok) {
-        reject("live_partial_recovered_leg_b_retry");
+      const failedLeg = legAResult.ok ? legBPlan : legAPlan;
+      const filledLeg = legAResult.ok ? legAPlan : legBPlan;
+      const failedResult = legAResult.ok ? legBResult : legAResult;
+      const retryFailedLeg = await placeBuyLeg(
+        failedLeg.outcome.asset,
+        failedLeg.amountUsd,
+        failedLeg.buyPrice
+      );
+      if (retryFailedLeg.ok) {
+        reject("live_partial_recovered_leg_retry");
         recordLivePair();
         continue;
       }
 
       let unwindShareAmount =
-        (legAUsd / Math.max(0.001, outcomeA.price)) * unwindShareBuffer;
+        (filledLeg.amountUsd / Math.max(0.001, filledLeg.quotePrice)) * unwindShareBuffer;
       try {
         const positions = await getPositions(myAddress, 200);
-        const legAPosition = positions.find(
-          (p) => !p.redeemable && p.asset === outcomeA.asset && Number(p.size) > 0
+        const filledLegPosition = positions.find(
+          (p) => !p.redeemable && p.asset === filledLeg.outcome.asset && Number(p.size) > 0
         );
-        if (legAPosition) {
+        if (filledLegPosition) {
           // Use the current held shares for unwind sizing to avoid oversell rejections.
           unwindShareAmount = Math.max(
             0.001,
-            Number(legAPosition.size) * unwindShareBuffer
+            Number(filledLegPosition.size) * unwindShareBuffer
           );
         } else {
           reject("live_partial_unwind_position_not_found");
@@ -1418,18 +1594,18 @@ export async function runPairedStrategy(
       } catch {
         reject("live_partial_unwind_position_lookup_failed");
       }
-      const unwindMinPrice = Math.max(0.01, outcomeA.price - unwindSellSlippage);
+      const unwindMinPrice = Math.max(0.01, filledLeg.quotePrice - unwindSellSlippage);
       const unwind = await placeUnwindSell(
-        outcomeA.asset,
+        filledLeg.outcome.asset,
         Math.max(0.001, unwindShareAmount),
         unwindMinPrice
       );
       if (unwind.ok) {
         result.failed++;
-        reject("live_partial_unwound_leg_a");
+        reject("live_partial_unwound_leg");
         result.error = clipError(
           result.error,
-          `Leg B failed and retry failed (${legB.error}; ${retryB.error}); unwind of leg A succeeded`
+          `Leg ${failedLeg.label} failed and retry failed (${failedResult.error}; ${retryFailedLeg.error}); unwind of leg ${filledLeg.label} succeeded`
         );
         break;
       }
@@ -1437,12 +1613,12 @@ export async function runPairedStrategy(
       unresolvedImbalances++;
       result.failed++;
       reject("live_partial_unwind_failed");
-      if (!result.unresolvedExposureAssets.includes(outcomeA.asset)) {
-        result.unresolvedExposureAssets.push(outcomeA.asset);
+      if (!result.unresolvedExposureAssets.includes(filledLeg.outcome.asset)) {
+        result.unresolvedExposureAssets.push(filledLeg.outcome.asset);
       }
       result.error = clipError(
         result.error,
-        `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${maxUnresolvedImbalancesPerRun}): leg B failed (${legB.error}); retry failed (${retryB.error}); unwind failed (${unwind.error})`
+        `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${maxUnresolvedImbalancesPerRun}): leg ${failedLeg.label} failed (${failedResult.error}); retry failed (${retryFailedLeg.error}); unwind failed (${unwind.error})`
       );
       if (unresolvedImbalances >= maxUnresolvedImbalancesPerRun) {
         reject("circuit_breaker_unresolved_imbalance");
