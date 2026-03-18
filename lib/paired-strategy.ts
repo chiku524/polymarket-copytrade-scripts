@@ -11,6 +11,15 @@ const DEFAULT_MAX_UNRESOLVED_IMBALANCES_PER_RUN = 1;
 const DEFAULT_UNWIND_SELL_SLIPPAGE = 0.03;
 const DEFAULT_UNWIND_SHARE_BUFFER = 0.99;
 const MIN_LIVE_BUY_PRICE_BUFFER = 0.01;
+const LIVE_CLIENT_CACHE_TTL_MS = 10 * 60 * 1000;
+
+let liveClientCache:
+  | {
+      key: string;
+      createdAt: number;
+      client: ClobClient;
+    }
+  | null = null;
 
 type TradingMode = "off" | "paper" | "live";
 type PairCoin = "BTC" | "ETH";
@@ -188,6 +197,39 @@ function freshnessDecayWeight(latestTimestampSec: number, nowSec: number, halfLi
   const effectiveHalfLife = Math.max(1, halfLifeSec);
   const ageSec = Math.max(0, nowSec - latestTimestampSec);
   return Math.exp((-Math.log(2) * ageSec) / effectiveHalfLife);
+}
+
+async function getLiveClobClient(params: {
+  privateKey: string;
+  myAddress: string;
+  signatureType: number;
+}): Promise<ClobClient> {
+  const key = `${params.myAddress}:${params.signatureType}:${params.privateKey}`;
+  const now = Date.now();
+  if (
+    liveClientCache &&
+    liveClientCache.key === key &&
+    now - liveClientCache.createdAt <= LIVE_CLIENT_CACHE_TTL_MS
+  ) {
+    return liveClientCache.client;
+  }
+  const signer = new Wallet(params.privateKey);
+  const rawClient = new ClobClient(CLOB_HOST, CHAIN_ID, signer);
+  const creds = await rawClient.createOrDeriveApiKey();
+  const client = new ClobClient(
+    CLOB_HOST,
+    CHAIN_ID,
+    signer,
+    creds,
+    params.signatureType,
+    params.myAddress
+  );
+  liveClientCache = {
+    key,
+    createdAt: now,
+    client,
+  };
+  return client;
 }
 
 function detectUpDownIdentity(
@@ -801,17 +843,11 @@ export async function runPairedStrategy(
   const copiedSet = new Set(state.copiedKeys);
   let client: ClobClient | null = null;
   if (mode === "live") {
-    const signer = new Wallet(privateKey);
-    const rawClient = new ClobClient(CLOB_HOST, CHAIN_ID, signer);
-    const creds = await rawClient.createOrDeriveApiKey();
-    client = new ClobClient(
-      CLOB_HOST,
-      CHAIN_ID,
-      signer,
-      creds,
+    client = await getLiveClobClient({
+      privateKey,
+      myAddress,
       signatureType,
-      myAddress
-    );
+    });
   }
   if (mode === "live" && client && autoExitResidualPositions) {
     try {
@@ -1075,6 +1111,18 @@ export async function runPairedStrategy(
       configuredQuoteAge > 0 ? configuredQuoteAge : Math.max(20, Math.floor(maxSignalAgeSec * 0.7));
     if (paperRelaxFreshness) {
       maxExecutionQuoteAgeSec = Math.floor(maxExecutionQuoteAgeSec * paperFreshnessAgeMultiplier);
+    }
+    if (mode === "live") {
+      const strictLiveQuoteAgeCap: Record<PairCadence, number> = {
+        "5m": 12,
+        "15m": 20,
+        hourly: 40,
+        other: 20,
+      };
+      maxExecutionQuoteAgeSec = Math.min(
+        maxExecutionQuoteAgeSec,
+        strictLiveQuoteAgeCap[signal.cadence] ?? 20
+      );
     }
     let acceptedEntryForSignal = false;
     for (let entryIndex = 0; entryIndex < maxEntriesForSignal; entryIndex++) {
@@ -1594,13 +1642,28 @@ export async function runPairedStrategy(
       } catch {
         reject("live_partial_unwind_position_lookup_failed");
       }
-      const unwindMinPrice = Math.max(0.01, filledLeg.quotePrice - unwindSellSlippage);
-      const unwind = await placeUnwindSell(
-        filledLeg.outcome.asset,
-        Math.max(0.001, unwindShareAmount),
-        unwindMinPrice
-      );
-      if (unwind.ok) {
+      const unwindAttemptPrices = [
+        Math.max(0.01, filledLeg.quotePrice - unwindSellSlippage),
+        Math.max(0.01, filledLeg.quotePrice - Math.max(unwindSellSlippage + 0.02, 0.06)),
+        Math.max(0.01, filledLeg.quotePrice - Math.max(unwindSellSlippage + 0.05, 0.1)),
+      ];
+      const unwindAttemptSizeScales = [1, 0.995, 0.99];
+      let unwindResult: { ok: boolean; error: string } = { ok: false, error: "Unwind not attempted" };
+      for (let i = 0; i < unwindAttemptPrices.length; i++) {
+        const attemptShares = Math.max(0.001, unwindShareAmount * unwindAttemptSizeScales[i]);
+        unwindResult = await placeUnwindSell(
+          filledLeg.outcome.asset,
+          attemptShares,
+          unwindAttemptPrices[i]
+        );
+        if (unwindResult.ok) {
+          if (i > 0) {
+            reject("live_partial_unwind_fallback_used");
+          }
+          break;
+        }
+      }
+      if (unwindResult.ok) {
         result.failed++;
         reject("live_partial_unwound_leg");
         result.error = clipError(
@@ -1618,7 +1681,7 @@ export async function runPairedStrategy(
       }
       result.error = clipError(
         result.error,
-        `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${maxUnresolvedImbalancesPerRun}): leg ${failedLeg.label} failed (${failedResult.error}); retry failed (${retryFailedLeg.error}); unwind failed (${unwind.error})`
+        `CRITICAL unresolved one-leg exposure (${unresolvedImbalances}/${maxUnresolvedImbalancesPerRun}): leg ${failedLeg.label} failed (${failedResult.error}); retry failed (${retryFailedLeg.error}); unwind failed (${unwindResult.error})`
       );
       if (unresolvedImbalances >= maxUnresolvedImbalancesPerRun) {
         reject("circuit_breaker_unresolved_imbalance");
