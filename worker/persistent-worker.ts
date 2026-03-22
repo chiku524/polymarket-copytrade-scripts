@@ -55,10 +55,10 @@ function resolveTarget(): WorkerTarget {
       "Set APP_BASE_URL (or WORKER_TARGET_URL) so the worker knows where to call the strategy endpoint."
     );
   }
-  // Default to a dedicated worker endpoint that can enforce a shared secret
-  // without affecting the UI's manual /api/run-now trigger.
+  // Default to /api/run-now. When WORKER_SHARED_SECRET is set on the web
+  // app, non-browser callers must provide x-worker-shared-secret.
   return {
-    url: `${normalizeBaseUrl(appBase)}/api/worker-run`,
+    url: `${normalizeBaseUrl(appBase)}/api/run-now`,
     method: "POST",
     requireCronAuth: false,
   };

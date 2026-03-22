@@ -43,13 +43,13 @@ rediss://default:PASSWORD@fly-polymarket-trader-redis.upstash.io:6379
 ## 3. Full Architecture
 
 ```
-[Worker (Mumbai)]  --POST /api/worker-run + x-worker-shared-secret-->  [Web app (Mumbai)]
-                                                                            |
-                                                                            v
-                                                                  [Polymarket API] (outbound from Mumbai egress IP)
-                                                                            |
-                                                                            v
-                                                                  [Redis (Stockholm)]  <-- config, state, paper stats, etc.
+[Worker (Mumbai)]  --POST /api/run-now + x-worker-shared-secret-->  [Web app (Mumbai)]
+                                                                         |
+                                                                         v
+                                                               [Polymarket API] (outbound from Mumbai egress IP)
+                                                                         |
+                                                                         v
+                                                               [Redis (Stockholm)]  <-- config, state, paper stats, etc.
 ```
 
 - **Worker** → only HTTP calls to the web app; does not touch Redis.
@@ -75,7 +75,7 @@ rediss://default:PASSWORD@fly-polymarket-trader-redis.upstash.io:6379
 | Variable | Required | Notes |
 |----------|----------|-------|
 | `APP_BASE_URL` | Yes | e.g. `https://polymarket-trader.fly.dev` (set in fly.worker.toml) |
-| `WORKER_SHARED_SECRET` | Recommended | Shared secret header for `/api/worker-run` |
+| `WORKER_SHARED_SECRET` | Recommended | Shared secret header for non-browser `/api/run-now` calls |
 | `CRON_SECRET` | Optional | Only required if you point worker at `/api/copy-trade` |
 | (no REDIS_URL) | — | Worker does not use Redis |
 
@@ -118,14 +118,14 @@ If Redis is working: `config`, `state`, `paperStats`, etc. will be populated. If
 ```bash
 curl -X POST \
   -H "x-worker-shared-secret: YOUR_WORKER_SHARED_SECRET" \
-  https://polymarket-trader.fly.dev/api/worker-run
+  https://polymarket-trader.fly.dev/api/run-now
 ```
 
 ---
 
 ## 6. Paper Stats Flow
 
-1. Worker calls `POST /api/worker-run` with `x-worker-shared-secret`.
+1. Worker calls `POST /api/run-now` with `x-worker-shared-secret`.
 2. Web app runs strategy; in paper mode calls `recordPaperRun()`.
 3. `recordPaperRun()` writes to Redis key `paper-stats` via `lib/kv.ts`.
 4. User opens UI → frontend calls `GET /api/status`.
@@ -144,7 +144,7 @@ curl -X POST \
 | Symptom | Likely cause |
 |---------|--------------|
 | Paper stats empty | `REDIS_URL` not set on web app; in-memory KV used per instance |
-| 401 Unauthorized on worker-run | `WORKER_SHARED_SECRET` missing/mismatch between worker and web app |
+| 401 Unauthorized on run-now (worker) | `WORKER_SHARED_SECRET` missing/mismatch between worker and web app |
 | 401 Unauthorized on copy-trade | Worker is still pointing to `/api/copy-trade` without matching `CRON_SECRET` |
 | Worker "skipped" every run | Mode is off, or safety latch active |
 | Geoblock blocked | Web app egress IP in restricted region; ensure Mumbai egress allocated |

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import {
   getConfig,
   setConfig,
@@ -26,6 +26,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const MY_ADDRESS = process.env.MY_ADDRESS ?? "0x370e81c93aa113274321339e69049187cce03bb9";
 const SIGNATURE_TYPE = parseInt(process.env.SIGNATURE_TYPE ?? "1", 10);
 const LATCH_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
+const WORKER_SHARED_SECRET = process.env.WORKER_SHARED_SECRET?.trim();
 
 export const maxDuration = 60;
 
@@ -42,6 +43,17 @@ async function enforceAutoStopTimer() {
   return { config: updatedConfig, expired: true as const, message };
 }
 
+function isTrustedUiRequest(request: NextRequest): boolean {
+  const origin = request.headers.get("origin");
+  const host = request.headers.get("host");
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
 /** GET returns instructions - use POST from the Run now button */
 export async function GET() {
   return NextResponse.json(
@@ -54,7 +66,14 @@ export async function GET() {
  * Manual trigger - no auth required (same-origin only in production).
  * Use for "Run now" button in the UI.
  */
-export async function POST() {
+export async function POST(request: NextRequest) {
+  if (WORKER_SHARED_SECRET) {
+    const provided = request.headers.get("x-worker-shared-secret")?.trim();
+    const fromTrustedUi = isTrustedUiRequest(request);
+    if (!fromTrustedUi && provided !== WORKER_SHARED_SECRET) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
   const lockToken = await acquireRunLock(120);
   if (!lockToken) {
     return NextResponse.json({ ok: true, skipped: true, reason: "busy" });
