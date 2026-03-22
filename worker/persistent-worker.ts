@@ -55,10 +55,10 @@ function resolveTarget(): WorkerTarget {
       "Set APP_BASE_URL (or WORKER_TARGET_URL) so the worker knows where to call the strategy endpoint."
     );
   }
-  // Default to /api/run-now so the worker can run without CRON_SECRET
-  // coupling; this uses the same endpoint as the UI "Run now" action.
+  // Default to a dedicated worker endpoint that can enforce a shared secret
+  // without affecting the UI's manual /api/run-now trigger.
   return {
-    url: `${normalizeBaseUrl(appBase)}/api/run-now`,
+    url: `${normalizeBaseUrl(appBase)}/api/worker-run`,
     method: "POST",
     requireCronAuth: false,
   };
@@ -95,6 +95,7 @@ function toJson(text: string): WorkerResult {
 async function main(): Promise<void> {
   const target = resolveTarget();
   const cronSecret = process.env.CRON_SECRET?.trim();
+  const workerSharedSecret = process.env.WORKER_SHARED_SECRET?.trim() || cronSecret;
   const intervalMs = Math.max(
     1000,
     Number.parseInt(process.env.WORKER_INTERVAL_MS ?? String(DEFAULT_INTERVAL_MS), 10) ||
@@ -119,6 +120,7 @@ async function main(): Promise<void> {
   console.log(`[worker] Starting persistent strategy worker`);
   console.log(`[worker] target=${target.url}`);
   console.log(`[worker] method=${target.method}, requireCronAuth=${target.requireCronAuth}`);
+  console.log(`[worker] hasSharedSecret=${workerSharedSecret ? "yes" : "no"}`);
   console.log(`[worker] intervalMs=${intervalMs}, timeoutMs=${timeoutMs}`);
 
   while (running) {
@@ -126,6 +128,9 @@ async function main(): Promise<void> {
     try {
       const headers: Record<string, string> = { Accept: "application/json" };
       if (target.method === "POST") headers["Content-Type"] = "application/json";
+      if (workerSharedSecret) {
+        headers["x-worker-shared-secret"] = workerSharedSecret;
+      }
       if (target.requireCronAuth) {
         if (cronSecret) {
           headers.authorization = `Bearer ${cronSecret}`;
