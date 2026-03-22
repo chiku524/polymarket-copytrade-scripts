@@ -526,7 +526,7 @@ const DEFAULT_CONFIG: CopyTraderConfig = {
   edgeBoostHighThresholdCents: 10,
   edgeBoostScalePct: 200,
   edgeBoostHighScalePct: 500,
-  pairLookbackSeconds: 600,
+  pairLookbackSeconds: 180,
   pairMaxMarketsPerRun: 4,
   reentryMaxEntriesPerSignal: 2,
   reentryEdgeStepCents: 0.15,

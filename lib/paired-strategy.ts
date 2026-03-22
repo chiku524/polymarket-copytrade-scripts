@@ -273,7 +273,7 @@ function detectUpDownIdentity(
   return { coin, cadence };
 }
 
-const MARKET_CACHE_TTL_MS = 60_000;
+const MARKET_CACHE_TTL_MS = 180_000;
 const marketCache = new Map<string, { fetchedAt: number; market: ClobMarket | null }>();
 
 async function getMarketCached(client: ClobClient, conditionId: string): Promise<ClobMarket | null> {
@@ -319,8 +319,8 @@ async function getRecentPairSignals(params: {
     cadence5m,
     cadence15m,
     cadenceHourly,
-    tradeLimit = 5000,
-    maxConditionsToInspect = 120,
+    tradeLimit = 2000,
+    maxConditionsToInspect = 80,
   } = params;
   const nowSec = Math.floor(Date.now() / 1000);
   const res = await fetch(`${DATA_API}/trades?limit=${tradeLimit}`, { cache: "no-store" });

@@ -13,7 +13,7 @@ type WorkerResult =
     }
   | Record<string, unknown>;
 
-const DEFAULT_INTERVAL_MS = 10000;
+const DEFAULT_INTERVAL_MS = 5000;
 const DEFAULT_TIMEOUT_MS = 70000;
 
 type WorkerTargetMethod = "GET" | "POST";
