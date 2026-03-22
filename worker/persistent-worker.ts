@@ -16,6 +16,13 @@ type WorkerResult =
 const DEFAULT_INTERVAL_MS = 10000;
 const DEFAULT_TIMEOUT_MS = 70000;
 
+type WorkerTargetMethod = "GET" | "POST";
+type WorkerTarget = {
+  url: string;
+  method: WorkerTargetMethod;
+  requireCronAuth: boolean;
+};
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -24,18 +31,37 @@ function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
-function resolveTargetUrl(): string {
+function parseMethod(raw: string | undefined, fallback: WorkerTargetMethod): WorkerTargetMethod {
+  const method = String(raw ?? "").trim().toUpperCase();
+  return method === "GET" || method === "POST" ? method : fallback;
+}
+
+function resolveTarget(): WorkerTarget {
   const direct = process.env.WORKER_TARGET_URL?.trim();
-  if (direct) return direct;
+  if (direct) {
+    const methodDefault = direct.includes("/api/copy-trade") ? "GET" : "POST";
+    const method = parseMethod(process.env.WORKER_TARGET_METHOD, methodDefault);
+    const requireCronAuth = direct.includes("/api/copy-trade");
+    return {
+      url: direct,
+      method,
+      requireCronAuth,
+    };
+  }
 
   const appBase = process.env.APP_BASE_URL?.trim();
-
   if (!appBase) {
     throw new Error(
       "Set APP_BASE_URL (or WORKER_TARGET_URL) so the worker knows where to call the strategy endpoint."
     );
   }
-  return `${normalizeBaseUrl(appBase)}/api/copy-trade`;
+  // Default to /api/run-now so the worker can run without CRON_SECRET
+  // coupling; this uses the same endpoint as the UI "Run now" action.
+  return {
+    url: `${normalizeBaseUrl(appBase)}/api/run-now`,
+    method: "POST",
+    requireCronAuth: false,
+  };
 }
 
 async function fetchWithTimeout(
@@ -67,7 +93,7 @@ function toJson(text: string): WorkerResult {
 }
 
 async function main(): Promise<void> {
-  const targetUrl = resolveTargetUrl();
+  const target = resolveTarget();
   const cronSecret = process.env.CRON_SECRET?.trim();
   const intervalMs = Math.max(
     1000,
@@ -91,19 +117,27 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => stop("SIGTERM"));
 
   console.log(`[worker] Starting persistent strategy worker`);
-  console.log(`[worker] target=${targetUrl}`);
+  console.log(`[worker] target=${target.url}`);
+  console.log(`[worker] method=${target.method}, requireCronAuth=${target.requireCronAuth}`);
   console.log(`[worker] intervalMs=${intervalMs}, timeoutMs=${timeoutMs}`);
 
   while (running) {
     const started = Date.now();
     try {
       const headers: Record<string, string> = { Accept: "application/json" };
-      if (cronSecret) headers.authorization = `Bearer ${cronSecret}`;
+      if (target.method === "POST") headers["Content-Type"] = "application/json";
+      if (target.requireCronAuth) {
+        if (cronSecret) {
+          headers.authorization = `Bearer ${cronSecret}`;
+        } else {
+          console.warn("[worker] target requires CRON_SECRET but CRON_SECRET is missing");
+        }
+      }
 
       const res = await fetchWithTimeout(
-        targetUrl,
+        target.url,
         {
-          method: "GET",
+          method: target.method,
           headers,
         },
         timeoutMs

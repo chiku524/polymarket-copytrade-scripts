@@ -1,4 +1,4 @@
-# Worker process - polls /api/copy-trade on the web app
+# Worker process - polls /api/run-now on the web app
 # Polymarket blocks US/EU – use Mumbai (bom); India is permitted
 app = 'polymarket-trader-worker'
 primary_region = 'bom'
