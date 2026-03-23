@@ -1117,10 +1117,10 @@ export async function runPairedStrategy(
     }
     if (mode === "live") {
       const strictLiveQuoteAgeCap: Record<PairCadence, number> = {
-        "5m": 12,
-        "15m": 20,
-        hourly: 40,
-        other: 20,
+        "5m": 18,
+        "15m": 25,
+        hourly: 50,
+        other: 25,
       };
       maxExecutionQuoteAgeSec = Math.min(
         maxExecutionQuoteAgeSec,
