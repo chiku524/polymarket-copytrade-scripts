@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - cursor/polymarket-bet-scraping-1616
 jobs:
   deploy-web:
     name: Deploy web app
