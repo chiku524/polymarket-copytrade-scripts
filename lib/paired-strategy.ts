@@ -11,6 +11,9 @@ const DEFAULT_MAX_UNRESOLVED_IMBALANCES_PER_RUN = 1;
 const DEFAULT_UNWIND_SELL_SLIPPAGE = 0.03;
 const DEFAULT_UNWIND_SHARE_BUFFER = 0.99;
 const MIN_LIVE_BUY_PRICE_BUFFER = 0.01;
+const LIVE_PRECHECK_BUFFER_LADDER = [0, 0.01, 0.02] as const;
+const LIVE_PRECHECK_MAX_DOWNSIZE_ATTEMPTS = 3;
+const LIVE_PRECHECK_DOWNSIZE_SAFETY_FACTOR = 0.98;
 const LIVE_CLIENT_CACHE_TTL_MS = 10 * 60 * 1000;
 
 let liveClientCache:
@@ -1529,49 +1532,146 @@ export async function runPairedStrategy(
         }
       };
 
-      const legAPlan: LiveLegPlan = {
-        label: "A",
-        outcome: outcomeA,
-        amountUsd: legAUsd,
-        quotePrice: outcomeA.price,
-        buyPrice: Math.max(0.001, Math.min(0.999, outcomeA.price + dynamicBuyPriceBuffer)),
-      };
-      const legBPlan: LiveLegPlan = {
-        label: "B",
-        outcome: outcomeB,
-        amountUsd: legBUsd,
-        quotePrice: outcomeB.price,
-        buyPrice: Math.max(0.001, Math.min(0.999, outcomeB.price + dynamicBuyPriceBuffer)),
+      const buildLiveLegPlans = (
+        amountAUsd: number,
+        amountBUsd: number,
+        extraBuffer: number
+      ): [LiveLegPlan, LiveLegPlan] => {
+        const totalBuffer = dynamicBuyPriceBuffer + extraBuffer;
+        return [
+          {
+            label: "A",
+            outcome: outcomeA,
+            amountUsd: amountAUsd,
+            quotePrice: outcomeA.price,
+            buyPrice: Math.max(0.001, Math.min(0.999, outcomeA.price + totalBuffer)),
+          },
+          {
+            label: "B",
+            outcome: outcomeB,
+            amountUsd: amountBUsd,
+            quotePrice: outcomeB.price,
+            buyPrice: Math.max(0.001, Math.min(0.999, outcomeB.price + totalBuffer)),
+          },
+        ];
       };
 
-      const [legAPrecheck, legBPrecheck] = await Promise.all([
-        precheckLiveLeg(legAPlan),
-        precheckLiveLeg(legBPlan),
-      ]);
-      if (!legAPrecheck.ok || !legBPrecheck.ok) {
-        if (!legAPrecheck.ok) {
-          reject(legAPrecheck.reason ?? "live_orderbook_precheck_failed");
+      type LivePrecheckResult = { ok: boolean; reason?: string; depthUsd?: number; error?: string };
+      let selectedLegAPlan: LiveLegPlan | null = null;
+      let selectedLegBPlan: LiveLegPlan | null = null;
+      let lastLegAPrecheck: LivePrecheckResult | null = null;
+      let lastLegBPrecheck: LivePrecheckResult | null = null;
+
+      for (const extraBuffer of LIVE_PRECHECK_BUFFER_LADDER) {
+        if (extraBuffer > 0) {
+          // Additional buy-price ladder steps are only allowed when the resulting
+          // projected net edge remains strictly positive and above live surplus floor.
+          const projectedNetEdgeCents = netEdgeCents - extraBuffer * 200;
+          const projectedNetEdgeSurplusCents = projectedNetEdgeCents - signalMinEdgeCents;
+          if (
+            projectedNetEdgeCents <= 0 ||
+            projectedNetEdgeSurplusCents < liveMinNetEdgeSurplusCents
+          ) {
+            continue;
+          }
+        }
+
+        let attemptLegAUsd = legAUsd;
+        let attemptLegBUsd = legBUsd;
+
+        for (
+          let downsizeAttempt = 0;
+          downsizeAttempt <= LIVE_PRECHECK_MAX_DOWNSIZE_ATTEMPTS;
+          downsizeAttempt++
+        ) {
+          const [attemptLegAPlan, attemptLegBPlan] = buildLiveLegPlans(
+            attemptLegAUsd,
+            attemptLegBUsd,
+            extraBuffer
+          );
+          const [legAPrecheck, legBPrecheck] = await Promise.all([
+            precheckLiveLeg(attemptLegAPlan),
+            precheckLiveLeg(attemptLegBPlan),
+          ]);
+          lastLegAPrecheck = legAPrecheck;
+          lastLegBPrecheck = legBPrecheck;
+
+          if (legAPrecheck.ok && legBPrecheck.ok) {
+            attemptLegAPlan.precheckDepthUsd = legAPrecheck.depthUsd;
+            attemptLegBPlan.precheckDepthUsd = legBPrecheck.depthUsd;
+            attemptLegAPlan.liquidityScore =
+              (attemptLegAPlan.precheckDepthUsd ?? 0) / Math.max(0.01, attemptLegAPlan.amountUsd);
+            attemptLegBPlan.liquidityScore =
+              (attemptLegBPlan.precheckDepthUsd ?? 0) / Math.max(0.01, attemptLegBPlan.amountUsd);
+            selectedLegAPlan = attemptLegAPlan;
+            selectedLegBPlan = attemptLegBPlan;
+            break;
+          }
+
+          const legAInsufficientDepth =
+            !legAPrecheck.ok && legAPrecheck.reason === "live_orderbook_precheck_insufficient_depth";
+          const legBInsufficientDepth =
+            !legBPrecheck.ok && legBPrecheck.reason === "live_orderbook_precheck_insufficient_depth";
+
+          if (!legAInsufficientDepth && !legBInsufficientDepth) {
+            break;
+          }
+          if (downsizeAttempt >= LIVE_PRECHECK_MAX_DOWNSIZE_ATTEMPTS) {
+            break;
+          }
+
+          const legAScale = legAInsufficientDepth
+            ? (legAPrecheck.depthUsd ?? 0) / Math.max(0.01, attemptLegAUsd * 1.02)
+            : 1;
+          const legBScale = legBInsufficientDepth
+            ? (legBPrecheck.depthUsd ?? 0) / Math.max(0.01, attemptLegBUsd * 1.02)
+            : 1;
+          const rawScale = Math.min(legAScale, legBScale);
+          const nextScale = Math.max(
+            0,
+            Math.min(1, rawScale * LIVE_PRECHECK_DOWNSIZE_SAFETY_FACTOR)
+          );
+          if (!Number.isFinite(nextScale) || nextScale <= 0 || nextScale >= 0.999) {
+            break;
+          }
+
+          const nextLegAUsd = attemptLegAUsd * nextScale;
+          const nextLegBUsd = attemptLegBUsd * nextScale;
+          if (nextLegAUsd < POLYMARKET_MIN_ORDER_USD || nextLegBUsd < POLYMARKET_MIN_ORDER_USD) {
+            break;
+          }
+
+          attemptLegAUsd = nextLegAUsd;
+          attemptLegBUsd = nextLegBUsd;
+        }
+
+        if (selectedLegAPlan && selectedLegBPlan) {
+          break;
+        }
+      }
+
+      if (!selectedLegAPlan || !selectedLegBPlan) {
+        if (lastLegAPrecheck && !lastLegAPrecheck.ok) {
+          reject(lastLegAPrecheck.reason ?? "live_orderbook_precheck_failed");
           result.error = clipError(
             result.error,
-            `Precheck leg A failed: ${legAPrecheck.error ?? "unknown"}`
+            `Precheck leg A failed: ${lastLegAPrecheck.error ?? "unknown"}`
           );
         }
-        if (!legBPrecheck.ok) {
-          reject(legBPrecheck.reason ?? "live_orderbook_precheck_failed");
+        if (lastLegBPrecheck && !lastLegBPrecheck.ok) {
+          reject(lastLegBPrecheck.reason ?? "live_orderbook_precheck_failed");
           result.error = clipError(
             result.error,
-            `Precheck leg B failed: ${legBPrecheck.error ?? "unknown"}`
+            `Precheck leg B failed: ${lastLegBPrecheck.error ?? "unknown"}`
           );
         }
         break;
       }
 
-      legAPlan.precheckDepthUsd = legAPrecheck.depthUsd;
-      legBPlan.precheckDepthUsd = legBPrecheck.depthUsd;
-      legAPlan.liquidityScore =
-        (legAPlan.precheckDepthUsd ?? 0) / Math.max(0.01, legAPlan.amountUsd);
-      legBPlan.liquidityScore =
-        (legBPlan.precheckDepthUsd ?? 0) / Math.max(0.01, legBPlan.amountUsd);
+      const legAPlan = selectedLegAPlan;
+      const legBPlan = selectedLegBPlan;
+      legAUsd = legAPlan.amountUsd;
+      legBUsd = legBPlan.amountUsd;
 
       // Harder leg first: lower liquidity score and larger notional are prioritized.
       const executionOrder = [legAPlan, legBPlan].sort((left, right) => {
