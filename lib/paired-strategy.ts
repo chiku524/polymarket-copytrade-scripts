@@ -1563,6 +1563,7 @@ export async function runPairedStrategy(
       let lastLegBPrecheck: LivePrecheckResult | null = null;
 
       for (const extraBuffer of LIVE_PRECHECK_BUFFER_LADDER) {
+        reject(`live_precheck_ladder_attempt_buffer_${Math.round(extraBuffer * 100)}`);
         if (extraBuffer > 0) {
           // Additional buy-price ladder steps are only allowed when the resulting
           // projected net edge remains strictly positive and above live surplus floor.
@@ -1597,6 +1598,13 @@ export async function runPairedStrategy(
           lastLegBPrecheck = legBPrecheck;
 
           if (legAPrecheck.ok && legBPrecheck.ok) {
+            if (downsizeAttempt > 0) {
+              reject(`live_precheck_downsize_recovered_after_${downsizeAttempt}`);
+            } else if (extraBuffer > 0) {
+              reject(`live_precheck_ladder_recovered_buffer_${Math.round(extraBuffer * 100)}`);
+            } else {
+              reject("live_precheck_passed_initial");
+            }
             attemptLegAPlan.precheckDepthUsd = legAPrecheck.depthUsd;
             attemptLegBPlan.precheckDepthUsd = legBPrecheck.depthUsd;
             attemptLegAPlan.liquidityScore =
@@ -1614,11 +1622,14 @@ export async function runPairedStrategy(
             !legBPrecheck.ok && legBPrecheck.reason === "live_orderbook_precheck_insufficient_depth";
 
           if (!legAInsufficientDepth && !legBInsufficientDepth) {
+            reject("live_precheck_non_depth_failure");
             break;
           }
           if (downsizeAttempt >= LIVE_PRECHECK_MAX_DOWNSIZE_ATTEMPTS) {
+            reject("live_precheck_downsize_attempts_exhausted");
             break;
           }
+          reject("live_precheck_downsize_retry");
 
           const legAScale = legAInsufficientDepth
             ? (legAPrecheck.depthUsd ?? 0) / Math.max(0.01, attemptLegAUsd * 1.02)
@@ -1632,12 +1643,14 @@ export async function runPairedStrategy(
             Math.min(1, rawScale * LIVE_PRECHECK_DOWNSIZE_SAFETY_FACTOR)
           );
           if (!Number.isFinite(nextScale) || nextScale <= 0 || nextScale >= 0.999) {
+            reject("live_precheck_downsize_invalid_scale");
             break;
           }
 
           const nextLegAUsd = attemptLegAUsd * nextScale;
           const nextLegBUsd = attemptLegBUsd * nextScale;
           if (nextLegAUsd < POLYMARKET_MIN_ORDER_USD || nextLegBUsd < POLYMARKET_MIN_ORDER_USD) {
+            reject("live_precheck_downsize_below_polymarket_min");
             break;
           }
 
@@ -1651,6 +1664,7 @@ export async function runPairedStrategy(
       }
 
       if (!selectedLegAPlan || !selectedLegBPlan) {
+        reject("live_precheck_ladder_exhausted");
         if (lastLegAPrecheck && !lastLegAPrecheck.ok) {
           reject(lastLegAPrecheck.reason ?? "live_orderbook_precheck_failed");
           result.error = clipError(
